@@ -17,7 +17,7 @@ sub POE::Kernel {
 }
 
 BEGIN {
-	if($ENV{'DEBUG'}) {
+	if($ENV{'HOE_DEBUG'}) {
 		eval "sub DEBUGGING () { 1 }";
 	}
 	else {
@@ -34,6 +34,8 @@ sub ID {
 	return "THE KERNEL";
 }
 
+sub RUNNING_IN_HELL () { 0 }
+
 sub new {
   my $class = shift;
   my $self = bless [
@@ -46,6 +48,7 @@ sub new {
     {}, # Refs
     {}, # IDS
     {}, # Sessions
+    {}, # Signals
   ], (ref $class || $class);
 
   POE::Callstack->push($self);
@@ -62,6 +65,7 @@ sub KR_FH_WRITES_PAUSED	() { 5 }
 sub KR_REFS	() { 6 }
 sub KR_IDS	() { 7 }
 sub KR_SESSIONS	() { 8 }
+sub KR_SIGNALS	() { 9 }
 
 sub import {
   my $package = caller();
@@ -122,9 +126,23 @@ sub ID_session_to_id {
 	return $self->[KR_SESSIONS]->{$session};
 }
 
+sub ID_id_to_session {
+	my $self = shift;
+	my $id = shift;
+
+	return $self->[KR_IDS]->{$id};
+}
+
+sub get_active_session {
+	return POE::Callstack->peek();
+}
+
 sub post {
-  my $self = shift;
-  my ($to, $state, @etc) = @_;
+	my $self = shift;
+	my ($to, $state, @etc) = @_;
+
+	die "destination is undefined in post" unless(defined( $to ));
+	die "event is undefined in post" unless(defined( $state ));
 
   # Name resolution /could/ happen during dispatch instead, I think everything would stay alive just fine simply because kernel is embedded in the event, and the sessions are all held inside aliases within that.
   my $from = POE::Callstack->peek();
@@ -136,12 +154,23 @@ sub post {
 
 sub yield {
 	my $self = shift;
-	$self->post( POE::Callstack->peek(), @_ );
+	my ($state, @etc) = @_;
+
+	die "event name is undefined in yield" unless(defined( $state )); 
+
+	my $from = POE::Callstack->peek();
+	my $queue = $self->[KR_QUEUE];
+	@$queue = sort { $a <=> $b } (@$queue, POE::Event->new( $self, time, $from, $from, $state, \@etc ));
+	
+	DEBUG "[YIELD] Kernel $self From/To: $from State: $state\n" if DEBUGGING;
 }
 
 sub call {
   my $self = shift;
   my ($to, $state, @etc) = @_;
+
+  die "destination undefined in call" unless(defined( $to ));
+  die "event undefined in call" unless(defined( $to ));
 
   DEBUG "[CALL] Kernel: $self To: $to State: $state\n" if DEBUGGING;
   POE::Event->new( $self, undef, POE::Callstack->peek(), $to, $state, \@etc )->dispatch();
@@ -168,11 +197,6 @@ sub resolve_session {
   }
 }
 
-sub signal {
-	my $self = shift;
-	DEBUG "Signal WTF? @_\n" if DEBUGGING;
-}
-
 sub _select_any {
 	my $self = shift;
 	my $class = shift;
@@ -182,6 +206,11 @@ sub _select_any {
 	my $fd = fileno($fh);
 
 	my $current_session = POE::Callstack->peek();
+
+	unless (defined( $current_session )) {
+		warn "[[[BAD]]] Current session undefined, global destruction?\n";
+		return;
+	}
 	
 	my $main_class = $self->[$class];
 	my $paused_class = $self->[$class + 1];
@@ -317,14 +346,14 @@ sub delay {
 	}
 }
 
-sub delay_set {
-	my $self = shift;
-	my $event = shift;
-	my $seconds = shift;
-	my $args = [@_];
-
-
-}
+#sub delay_set {
+#	my $self = shift;
+#	my $event = shift;
+#	my $seconds = shift;
+#	my $args = [@_];
+#
+#
+#}
 
 sub run {
 	my $self = shift;
@@ -333,9 +362,12 @@ sub run {
 
 	my $queue = $self->[KR_QUEUE];
 	my $fh_reads = $self->[KR_FH_READS];
+	my $fh_preads = $self->[KR_FH_READS_PAUSED];
 	my $fh_writes = $self->[KR_FH_WRITES];
+	my $fh_pwrites = $self->[KR_FH_WRITES_PAUSED];
+	my $signals = $self->[KR_SIGNALS];
 
-	while (@$queue or keys %$fh_reads or keys %$fh_writes) {
+	while (@$queue or keys %$fh_reads or keys %$fh_preads or keys %$fh_writes or keys %$fh_pwrites or keys %$signals) {
 		my $delay = undef;
 		while (@$queue) {
 			my $when = $queue->[0]->when();
@@ -362,7 +394,10 @@ sub _select {
 	my $timeout = shift;
 
 	my $reads = $self->[KR_FH_READS];
+	my $preads = $self->[KR_FH_READS_PAUSED];
 	my $writes = $self->[KR_FH_WRITES];
+	my $pwrites = $self->[KR_FH_WRITES_PAUSED];
+	my $signals = $self->[KR_SIGNALS];
 
 	my $rin = my $win = my $ein = '';
 	
@@ -372,13 +407,35 @@ sub _select {
 		vec($rin, $fd, 1) = 1;
 	}
 
+	my $pread_count = 0;
+	foreach my $fd (keys %$preads) {
+		$pread_count++;
+	}
+
 	my $write_count = 0;
 	foreach my $fd (keys %$writes) {
 		$write_count++;
 		vec($win, $fd, 1) = 1;
 	}
 
-	DEBUG "[SELECT] Waiting a maximum of $timeout for $read_count reads and $write_count writes.\n" if DEBUGGING;
+	my $pwrite_count = 0;
+	foreach my $fd (keys %$pwrites) {
+		$pwrite_count++;
+	}
+
+	my $signal_count = 0;
+	foreach my $signal (keys %$signals) {
+		$signal_count++;
+	}
+
+	if (DEBUGGING) {
+		if (defined( $timeout )) {
+			DEBUG "[SELECT] Waiting a maximum of $timeout for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, and $signal_count signals.\n" if DEBUGGING;
+		}
+		else {
+			DEBUG "[SELECT] Waiting for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, and $signal_count signals.\n" if DEBUGGING;
+		}
+	}
 
 	my $nfound = CORE::select( my $rout = $rin, my $wout = $win, my $eout = $ein, $timeout );
 
@@ -409,10 +466,17 @@ sub alias_set {
 }
  
 sub alias_remove {
-  my $self = shift;
-  my $alias = $_[0];
+	my $self = shift;
+	my $alias = $_[0];
 
-  delete $self->[KR_ALIASES]->{$alias};
+	delete $self->[KR_ALIASES]->{$alias};
+}
+
+sub alias_resolve {
+	my $self = shift;
+	my $alias = $_[0];
+
+	return $self->[KR_ALIASES]->{$alias};
 }
 
 sub refcount_increment {
@@ -447,11 +511,125 @@ sub state {
 
 sub register_state {
 	my $self = shift;
-	DEBUG "State removal attempted as kernel, @_\n";
+	DEBUG "[[[BAD]]] State removal attempted as kernel, @_\n";
+}
+
+sub sig {
+	my $self = shift;
+	my $signal_name = shift;
+	my $event = shift;
+
+	die "undefined signal in sig" unless(defined( $signal_name ));
+
+	my $signals = $self->[KR_SIGNALS];
+	
+	my $session = POE::Callstack->peek();
+
+	DEBUG "[SIGNAL] Session: $session Signal: $signal_name Event: $event\n" if DEBUGGING;
+	
+	if ($event) {
+		unless (exists( $signals->{$signal_name} )) {
+			$signals->{$signal_name} = {};
+		}
+		$signals->{$signal_name}->{$session} = [ $session, $event ];
+
+		if ($signal_name eq 'CHLD') {
+			$self->_install_chld_handler;
+		}
+	}
+	else {
+		if (exists( $signals->{$signal_name} )) {
+			delete $signals->{$signal_name}->{$session};
+		}
+		unless( keys %{$signals->{$signal_name}} ) {
+			delete $signals->{$signal_name};
+			$SIG{$signal_name} = "DEFAULT" if exists $SIG{$signal_name};
+		}
+	}
+}
+
+use POSIX ":sys_wait_h";
+
+sub _install_chld_handler {
+	DEBUG "Installing CHLD Handler\n" if DEBUGGING;
+	my $kernel = shift;
+	$SIG{CHLD} = sub {
+		DEBUG( "Got CHLD SIGNAL\n" ) if DEBUGGING;
+		while ((my $child = waitpid( -1, WNOHANG)) > 0) {
+			my $status = $?;
+			my $watchers = $kernel->[KR_SIGNALS]->{CHLD};
+			while (my ($session, $watcher) = each %$watchers) {
+				$kernel->post( $watcher->[0], $watcher->[1], 'CHLD', $child, $status );
+			}
+		}
+		$kernel->_install_chld_handler
+	};
+}
+
+sub _data_sig_get_safe_signals {
+	return keys %SIG;
+}
+
+sub sig_handled {
 }
 
 sub DESTROY {
   DEBUG "Kernel Destruction!\n" if DEBUGGING;
+}
+
+BEGIN {
+	my @management = qw(ID run run_one_timeslice stop); # Add the last two to POE docs synopsis.
+	my @FIFO = qw(post yield call);
+	my @original_alarms = qw(alarm alarm_add delay delay_add);
+	my @new_alarms = qw(alarm_set delay_set alarm_adjust delay_adjust alarm_remove alarm_remove_all);
+	my @aliases = qw(alias_set alias_remove alias_resolve ID_id_to_session ID_session_to_id alias_list);
+	my @filehandle = qw(select_read select_write select_pause_read select_resume_read select_pause_write select_resume_write select_expedite select); # select_pause_read missing in POE docs main body
+	my @sessions = qw(detach_child detach_myself); # Missing from POE synopsis
+	my @signals = qw(sig sig_handled signal signal_ui_destroy); # signal_ui_destory missing from synposis
+	my @state = qw(state);
+	my @refcount = qw(refcount_increment refcount_decrement);
+	my @data = qw(get_active_session get_active_event); # get_active_event missing from main docs
+
+	my @all = (@management, @FIFO, @original_alarms, @new_alarms, @aliases, @filehandle, @sessions, @signals, @state, @refcount, @data);
+
+	if ($ENV{HOE_TEST_COVERAGE}) {
+		my $good = 0;
+		my $bad = 0;
+		
+		foreach my $method (@all) {
+			if (__PACKAGE__->can($method)) {
+				$good++;
+				warn "$method\tYes\n";
+			}
+			else {
+				$bad++;
+				warn "$method\tNo\n";
+			}
+		}
+		my $percentage = sprintf( "%f", ($good/($good+$bad)))*100;
+		warn "\n$good Handled / $bad Not : $percentage%.\n";
+	}
+
+	if (my $failtype = $ENV{HOE_FAILURES}) {
+		foreach my $method (@all) {
+			next if(__PACKAGE__->can($method));
+			if ($failtype eq 'SILENT') {
+				eval qq(sub $method { });
+				die ($@) if $@;
+			}
+			elsif ($failtype eq 'WARN') {
+				eval qq(sub $method { shift; warn "[BAD] $method: \@_\\n" });
+				die ("eval failed $@") if $@;
+			}
+			elsif ($failtype eq 'FATAL') {
+				eval qq(sub $method { shift; warn "[BAD] $method: \@_\\n"; exit });
+				die ("eval failed: $@") if $@;
+			}
+			else {
+				die "HOE_FAILURES must be one of SILENT WARN or FATAL if supplied\n";
+			}
+		}
+	}
 }
 
 1;

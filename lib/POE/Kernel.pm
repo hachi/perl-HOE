@@ -8,6 +8,8 @@ use WeakRef;
 use POE::Event;
 use POE::Callstack;
 
+use Carp qw(cluck);
+
 use vars qw($poe_kernel);
 
 $poe_kernel = __PACKAGE__->new();
@@ -16,6 +18,14 @@ sub POE::Kernel {
 	return $poe_kernel;
 }
 
+#$SIG{ALRM} = sub {
+#	DEBUG( "BLOCKED!\n" );
+#	cluck( "BLOCKED!\n" );
+#	sleep 600;
+#};
+#
+#alarm 20;
+
 BEGIN {
 	if($ENV{'HOE_DEBUG'}) {
 		eval "sub DEBUGGING () { 1 }";
@@ -23,10 +33,24 @@ BEGIN {
 	else {
 		eval "sub DEBUGGING () { 0 }";
 	}
-}
 
-sub DEBUG {
-	print @_;
+	unless (__PACKAGE__->can('ASSERT_USAGE')) {
+		eval "sub ASSERT_USAGE () { 0 }";
+	}
+
+	my $debug_file;
+	
+	if(my $debug_filename = $ENV{'HOE_DEBUG_FILE'}) {
+		open $debug_file, '>', $debug_filename or die "can't open debug file '$debug_filename': $!";
+		CORE::select((CORE::select($debug_file), $| = 1)[0]);
+	}
+	else {
+		$debug_file = \*STDERR;
+	}
+
+	sub DEBUG {
+		print $debug_file @_;
+	}
 }
 
 sub ID {
@@ -144,12 +168,12 @@ sub post {
 	die "destination is undefined in post" unless(defined( $to ));
 	die "event is undefined in post" unless(defined( $state ));
 
-  # Name resolution /could/ happen during dispatch instead, I think everything would stay alive just fine simply because kernel is embedded in the event, and the sessions are all held inside aliases within that.
-  my $from = POE::Callstack->peek();
-  my $queue = $self->[KR_QUEUE];
-  @$queue = sort { $a <=> $b } (@$queue, POE::Event->new( $self, time, $from, $to, $state, \@etc ));
+	# Name resolution /could/ happen during dispatch instead, I think everything would stay alive just fine simply because kernel is embedded in the event, and the sessions are all held inside aliases within that.
+	my $from = POE::Callstack->peek();
+	my $queue = $self->[KR_QUEUE];
+	@$queue = sort { $a <=> $b } (@$queue, POE::Event->new( $self, time, $from, $to, $state, \@etc ));
 
-  DEBUG "[POST] Kernel: $self From: $from To: $to State: $state\n" if DEBUGGING;
+	DEBUG "[POST] Kernel: $self From: $from To: $to State: $state Args: @etc\n" if DEBUGGING;
 }
 
 sub yield {
@@ -166,35 +190,36 @@ sub yield {
 }
 
 sub call {
-  my $self = shift;
-  my ($to, $state, @etc) = @_;
+	my $self = shift;
+	my ($to, $state, @etc) = @_;
 
-  die "destination undefined in call" unless(defined( $to ));
-  die "event undefined in call" unless(defined( $to ));
+	die "destination undefined in call" unless(defined( $to ));
+	die "event undefined in call" unless(defined( $to ));
 
-  DEBUG "[CALL] Kernel: $self To: $to State: $state\n" if DEBUGGING;
-  POE::Event->new( $self, undef, POE::Callstack->peek(), $to, $state, \@etc )->dispatch();
+	DEBUG "[CALL] Kernel: $self To: $to State: $state\n" if DEBUGGING;
+	POE::Event->new( $self, undef, POE::Callstack->peek(), $to, $state, \@etc )->dispatch();
+	DEBUG "[CALL] Completed\n" if DEBUGGING;
 }
 
 sub resolve_session {
-  my $self = shift;
-  my $input = $_[0];
+	my $self = shift;
+	my $input = $_[0];
   
-  my $aliases = $self->[KR_ALIASES];
-  my $ids = $self->[KR_IDS];
-  
-  if ($input->can('_invoke_state')) {
-    return $input;
-  }
-  elsif (exists( $aliases->{$input} )) {
-    return $aliases->{$input};
-  }
-  elsif (exists( $ids->{$input} )) {
-    return $ids->{$input};
-  }
-  else {
-    return $input;
-  }
+	my $aliases = $self->[KR_ALIASES];
+	my $ids = $self->[KR_IDS];
+
+	if ($input->can('_invoke_state')) {
+		return $input;
+	}
+	elsif (exists( $aliases->{$input} )) {
+		return $aliases->{$input};
+	}
+	elsif (exists( $ids->{$input} )) {
+		return $ids->{$input};
+	}
+	else {
+		return $input;
+	}
 }
 
 sub _select_any {
@@ -208,7 +233,7 @@ sub _select_any {
 	my $current_session = POE::Callstack->peek();
 
 	unless (defined( $current_session )) {
-		warn "[[[BAD]]] Current session undefined, global destruction?\n";
+		DEBUG "[[[BAD]]] Current session undefined, global destruction?\n";
 		return;
 	}
 	
@@ -216,30 +241,30 @@ sub _select_any {
 	my $paused_class = $self->[$class + 1];
 
 	if ($event) { # Setup watcher
-		DEBUG "[SELECT] Watch Fh: $fh Class: $class Event: $event\n" if DEBUGGING;
+		DEBUG "[WATCH] Watch Fd: $fd Fh: $fh Class: $class Event: $event\n" if DEBUGGING;
 		unless (exists $main_class->{$fd} and ref $main_class->{$fd} eq 'ARRAY') {
 			$main_class->{$fd} = [];
 		}
 
-		push @{$main_class->{$fd}}, {
-			kernel	=> $self,
-			session	=> $current_session,
-			fd	=> $fd,
-			fh	=> $fh,
-			event	=> $event,
-		};
+		unless (grep { $_->{session} == $current_session } @{$main_class->{$fd}}) {
+			push @{$main_class->{$fd}}, {
+				kernel	=> $self,
+				session	=> $current_session,
+				fd	=> $fd,
+				fh	=> $fh,
+				event	=> $event,
+			};
+		}
 	}
 	else { # Clear watcher
-		DEBUG "[SELECT] Stop Fh: $fh Class: $class\n" if DEBUGGING;
+		DEBUG "[WATCH] Stop Fd: $fd Fh: $fh Class: $class\n" if DEBUGGING;
 		@{$main_class->{$fd}} = grep { not $_->{session} == $current_session } (@{$main_class->{$fd}});
 		@{$paused_class->{$fd}} = grep { not $_->{session} == $current_session } (@{$paused_class->{$fd}});
 
 		unless (@{$main_class->{$fd}}) {
-			DEBUG "[SELECT] Delete ${class} Fh: $fh\n" if DEBUGGING;
 			delete $main_class->{$fd};
 		}
 		unless (@{$paused_class->{$fd}}) {
-			DEBUG "[SELECT] Delete ${class}_paused Fh: $fh\n" if DEBUGGING;
 			delete $paused_class->{$fd};
 		}
 	}
@@ -247,25 +272,33 @@ sub _select_any {
 
 sub select_read {
 	my $self = shift;
+	DEBUG "[WATCH] Read @_\n" if DEBUGGING;
 	$self->_select_any( KR_FH_READS, @_ );
 }
 
 sub select_write {
 	my $self = shift;
+	DEBUG "[WATCH] Write @_\n" if DEBUGGING;
 	$self->_select_any( KR_FH_WRITES, @_ );
 }
 
 sub select {
 	my $self = shift;
-	my $fh = shift;
-	my $read = shift;
-	my $write = shift;
-	my $expedite = shift;
+	my ($fh, $read, $write, $expedite) = @_;
 
 	die if $expedite;
 
-	$self->select_read( $fh, $read );
-	$self->select_write( $fh, $write );
+	if ($read and $write) {
+		$self->select_read( $fh, $read );
+		$self->select_write( $fh, $write );
+	}
+	elsif ($read or $write) {
+		die();
+	}
+	else {
+		$self->select_read( $fh );
+		$self->select_write( $fh );
+	}
 }
 
 sub _select_pause_any {
@@ -283,11 +316,13 @@ sub _select_pause_any {
 
 sub select_pause_read {
 	my $self = shift;
+	DEBUG "[WATCH] Read pause: @_\n" if DEBUGGING;
 	$self->_select_pause_any( KR_FH_READS, @_ );
 }
 
 sub select_pause_write {
 	my $self = shift;
+	DEBUG "[WATCH] Write pause: @_\n" if DEBUGGING;
 	$self->_select_pause_any( KR_FH_WRITES, @_ );
 }
 
@@ -306,11 +341,13 @@ sub _select_resume_any {
 
 sub select_resume_read {
 	my $self = shift;
+	DEBUG "[WATCH] Read resume: @_\n" if DEBUGGING;
 	$self->_select_resume_any( KR_FH_READS, @_ );
 }
 
 sub select_resume_write {
 	my $self = shift;
+	DEBUG "[WATCH] Write resume: @_\n" if DEBUGGING;
 	$self->_select_resume_any( KR_FH_WRITES, @_ );
 }
 
@@ -365,15 +402,18 @@ sub run {
 	my $fh_preads = $self->[KR_FH_READS_PAUSED];
 	my $fh_writes = $self->[KR_FH_WRITES];
 	my $fh_pwrites = $self->[KR_FH_WRITES_PAUSED];
-	my $signals = $self->[KR_SIGNALS];
 
-	while (@$queue or keys %$fh_reads or keys %$fh_preads or keys %$fh_writes or keys %$fh_pwrites or keys %$signals) {
+	while (@$queue or keys %$fh_reads or keys %$fh_preads or keys %$fh_writes or keys %$fh_pwrites) {
 		my $delay = undef;
 		while (@$queue) {
 			my $when = $queue->[0]->when();
 			if ($when <= time) {
 				my $event = shift @$queue;
+				my $from = $event->from;
+				my $name = $event->name;
+				DEBUG "[DISPATCH] From: $from Event: $name\n" if DEBUGGING;
 				$event->dispatch();
+				DEBUG "[DISPATCH] Completed\n" if DEBUGGING;
 				if (@$queue) {
 					$when = $queue->[0]->when();
 				}
@@ -430,11 +470,16 @@ sub _select {
 
 	if (DEBUGGING) {
 		if (defined( $timeout )) {
-			DEBUG "[SELECT] Waiting a maximum of $timeout for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, and $signal_count signals.\n" if DEBUGGING;
+			DEBUG "[POLL] Waiting a maximum of $timeout for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, and $signal_count signals.\n" if DEBUGGING;
 		}
 		else {
-			DEBUG "[SELECT] Waiting for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, and $signal_count signals.\n" if DEBUGGING;
+			DEBUG "[POLL] Waiting for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, and $signal_count signals.\n" if DEBUGGING;
 		}
+#		use Data::Dumper;
+#		if ($read_count == 0 and $write_count == 0) {
+#			print Dumper( $preads );
+#			print Dumper( $pwrites );
+#		}
 	}
 
 	my $nfound = CORE::select( my $rout = $rin, my $wout = $win, my $eout = $ein, $timeout );
@@ -456,13 +501,13 @@ sub _select {
 }
 
 sub alias_set {
-  my $self = shift;
-  my $alias = $_[0];
-  my $session = POE::Callstack->peek();
+	my $self = shift;
+	my $alias = $_[0];
+	my $session = POE::Callstack->peek();
   
-  $self->[KR_ALIASES]->{$alias} = $session;
+	$self->[KR_ALIASES]->{$alias} = $session;
 
-  # We can either hook into the session and wait for a DESTROY event to come back to us to clean up the alias, or we can stipulate that the session object must clean up all of it's own aliases. The latter may be better for speed and clean code.
+	# We can either hook into the session and wait for a DESTROY event to come back to us to clean up the alias, or we can stipulate that the session object must clean up all of it's own aliases. The latter may be better for speed and clean code.
 }
  
 sub alias_remove {
@@ -519,15 +564,16 @@ sub sig {
 	my $signal_name = shift;
 	my $event = shift;
 
-	die "undefined signal in sig" unless(defined( $signal_name ));
+	if (ASSERT_USAGE) {
+		die "undefined signal in sig" unless(defined( $signal_name ));
+	}
 
 	my $signals = $self->[KR_SIGNALS];
 	
 	my $session = POE::Callstack->peek();
 
-	DEBUG "[SIGNAL] Session: $session Signal: $signal_name Event: $event\n" if DEBUGGING;
-	
 	if ($event) {
+		DEBUG "[SIGNAL] Session: $session Signal: $signal_name Event: $event\n" if DEBUGGING;
 		unless (exists( $signals->{$signal_name} )) {
 			$signals->{$signal_name} = {};
 		}
@@ -538,6 +584,7 @@ sub sig {
 		}
 	}
 	else {
+		DEBUG "[SIGNAL] Session: $session Signal: $signal_name\n" if DEBUGGING;
 		if (exists( $signals->{$signal_name} )) {
 			delete $signals->{$signal_name}->{$session};
 		}
@@ -618,11 +665,11 @@ BEGIN {
 				die ($@) if $@;
 			}
 			elsif ($failtype eq 'WARN') {
-				eval qq(sub $method { shift; warn "[BAD] $method: \@_\\n" });
+				eval qq(sub $method { shift; DEBUG "[BAD] $method: \@_\\n" });
 				die ("eval failed $@") if $@;
 			}
 			elsif ($failtype eq 'FATAL') {
-				eval qq(sub $method { shift; warn "[BAD] $method: \@_\\n"; exit });
+				eval qq(sub $method { shift; DEBUG "[BAD] $method: \@_\\n"; exit });
 				die ("eval failed: $@") if $@;
 			}
 			else {

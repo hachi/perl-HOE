@@ -635,7 +635,7 @@ BEGIN {
 	my @signals = qw(sig sig_handled signal signal_ui_destroy); # signal_ui_destory missing from synposis
 	my @state = qw(state);
 	my @refcount = qw(refcount_increment refcount_decrement);
-	my @data = qw(get_active_session get_active_event); # get_active_event missing from main docs
+	my @data = qw(get_active_session get_active_event);
 
 	my @all = (@management, @FIFO, @original_alarms, @new_alarms, @aliases, @filehandle, @sessions, @signals, @state, @refcount, @data);
 

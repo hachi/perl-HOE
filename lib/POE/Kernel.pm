@@ -600,7 +600,10 @@ use POSIX ":sys_wait_h";
 sub _install_chld_handler {
 	DEBUG "Installing CHLD Handler\n" if DEBUGGING;
 	my $kernel = shift;
+	
 	$SIG{CHLD} = sub {
+		# Since this could happen between any two perl opcodes we should localize the error variable... waitpid plays with it.
+		local $!;
 		DEBUG( "Got CHLD SIGNAL\n" ) if DEBUGGING;
 		while ((my $child = waitpid( -1, WNOHANG)) > 0) {
 			my $status = $?;
@@ -609,7 +612,7 @@ sub _install_chld_handler {
 				$kernel->post( $watcher->[0], $watcher->[1], 'CHLD', $child, $status );
 			}
 		}
-		$kernel->_install_chld_handler
+		$kernel->_install_chld_handler; # This line could be keeping the kernel alive wrongly, not sure.
 	};
 }
 

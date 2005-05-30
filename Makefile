@@ -12,3 +12,6 @@ diff-install:
 		diff -u $(SHARE)/Kernel.pm lib/POE/Kernel.pm || true
 		diff -u $(SHARE)/Event.pm lib/POE/Event.pm || true
 		diff -u $(SHARE)/Callstack.pm lib/POE/Callstack.pm || true
+
+test:
+		HOE_TEST_COVERAGE=1 perl -Mlib=lib -c lib/POE/Kernel.pm

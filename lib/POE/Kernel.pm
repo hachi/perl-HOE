@@ -6,6 +6,7 @@ use warnings;
 use Time::HiRes;
 use WeakRef;
 use POE::Event;
+use POE::Event::Signal;
 use POE::Callstack;
 
 use Carp qw(cluck);
@@ -73,6 +74,8 @@ sub new {
     {}, # IDS
     {}, # Sessions
     {}, # Signals
+    {}, # Parent Session, by child session
+    {}, # Child Sessions hashref "key"==value (weakened values), by parent session
   ], (ref $class || $class);
 
   POE::Callstack->push($self);
@@ -90,6 +93,8 @@ sub KR_REFS	() { 6 }
 sub KR_IDS	() { 7 }
 sub KR_SESSIONS	() { 8 }
 sub KR_SIGNALS	() { 9 }
+sub KR_PARENTS	() { 10 }
+sub KR_CHILDREN	() { 11 }
 
 sub import {
   my $package = caller();
@@ -110,6 +115,12 @@ sub import {
 		my $id = $next_id++;
 		weaken($self->[KR_IDS]->{$id} = $session);
 		$self->[KR_SESSIONS]->{$session} = $id;
+
+		my $parent = POE::Callstack->peek();
+
+		$self->[KR_PARENTS]->{$session} = $parent;
+		weaken($self->[KR_CHILDREN]->{$parent}->{$session} = $session);
+		
 		# Who is SENDER in this case?
 		$self->call( $session, '_start', @args );
 		# TODO _parent and _child calls, as approrpriate
@@ -141,6 +152,8 @@ sub session_dealloc {
 	my $id = $self->[KR_SESSIONS]->{$session};
 	delete $self->[KR_SESSIONS]->{$session};
 	delete $self->[KR_IDS]->{$id};
+	my $parent = delete $self->[KR_PARENTS]->{$session};
+	delete $self->[KR_CHILDREN]->{$parent}->{$session};
 }
 
 sub ID_session_to_id {
@@ -159,6 +172,15 @@ sub ID_id_to_session {
 
 sub get_active_session {
 	return POE::Callstack->peek();
+}
+
+sub get_children {
+	my $self = shift;
+	my $parent = shift;
+	if (exists $self->[KR_CHILDREN]->{$parent}) {
+		return values %{$self->[KR_CHILDREN]->{$parent}};
+	}
+	return undef;
 }
 
 sub post {
@@ -593,6 +615,22 @@ sub sig {
 			$SIG{$signal_name} = "DEFAULT" if exists $SIG{$signal_name};
 		}
 	}
+}
+
+sub signal {
+	my $self = shift;
+	my $session = shift;
+	my $signal = shift;
+	my @args = @_;
+
+	POE::Event::Signal->new(
+		$self,
+		time(),
+		POE::Callstack->peek(),
+		$session,
+		$signal,
+		\@args,
+	)->dispatch();
 }
 
 use POSIX ":sys_wait_h";

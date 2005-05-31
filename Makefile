@@ -14,4 +14,4 @@ diff-install:
 		diff -u $(SHARE)/Callstack.pm lib/POE/Callstack.pm || true
 
 test:
-		HOE_TEST_COVERAGE=1 perl -Mlib=lib -c lib/POE/Kernel.pm
+		perl -Mlib=lib test.pl

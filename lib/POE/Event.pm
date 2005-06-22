@@ -27,7 +27,7 @@ sub new {
 	my $kernel = shift;
 	my $when = shift;
 	my $from = shift;
-	my $to = $kernel->resolve_session( shift );
+	my $to = shift; # Resolution does nasty things, figure out where it belongs later (used to be here)
 	my $name = shift;
 	my $args = shift;
 

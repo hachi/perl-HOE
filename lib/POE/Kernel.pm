@@ -15,8 +15,10 @@ use vars qw($poe_kernel);
 
 $poe_kernel = __PACKAGE__->new();
 
+# This is for silently making POE::Kernel->whatever from a package to an object call...
+# it may not even be necessary... heck, it may not even work... should test that.
 sub POE::Kernel {
-	return $poe_kernel;
+	return $poe_kernel; 
 }
 
 #$SIG{ALRM} = sub {
@@ -70,6 +72,8 @@ sub new {
     {}, # FH Reads (Paused)
     {}, # FH Writes
     {}, # FH Writes (Paused)
+    {}, # FH Expedites
+    {}, # FH Expedites (Paused spot, DANGEROUS, necessary for now)
     {}, # Refs
     {}, # IDS
     {}, # Sessions
@@ -89,12 +93,14 @@ sub KR_FH_READS	() { 2 }
 sub KR_FH_READS_PAUSED	() { 3 }
 sub KR_FH_WRITES	() { 4 }
 sub KR_FH_WRITES_PAUSED	() { 5 }
-sub KR_REFS	() { 6 }
-sub KR_IDS	() { 7 }
-sub KR_SESSIONS	() { 8 }
-sub KR_SIGNALS	() { 9 }
-sub KR_PARENTS	() { 10 }
-sub KR_CHILDREN	() { 11 }
+sub KR_FH_EXPEDITES	() { 6 }
+sub KR_FH_EXPEDITES_NASTY	() { 7 } # I have to make this exist to prevent crashes until I make watcher objects.
+sub KR_REFS	() { 8 }
+sub KR_IDS	() { 9 }
+sub KR_SESSIONS	() { 10 }
+sub KR_SIGNALS	() { 11 }
+sub KR_PARENTS	() { 12 }
+sub KR_CHILDREN	() { 13 }
 
 sub import {
   my $package = caller();
@@ -177,10 +183,15 @@ sub get_active_session {
 sub get_children {
 	my $self = shift;
 	my $parent = shift;
+
+	unless (defined( $parent )) {
+		cluck( "Undefined parent to find children of\n" );
+	}
+	
 	if (exists $self->[KR_CHILDREN]->{$parent}) {
 		return values %{$self->[KR_CHILDREN]->{$parent}};
 	}
-	return undef;
+	return (); # return empty list or undef... empty list prevents recursion problems... undef seems more correct
 }
 
 sub post {
@@ -230,6 +241,10 @@ sub resolve_session {
 	my $aliases = $self->[KR_ALIASES];
 	my $ids = $self->[KR_IDS];
 
+	unless( $input ) {
+		cluck( "Undefined state resolution attempted\n" );
+	}
+
 	if ($input->can('_invoke_state')) {
 		return $input;
 	}
@@ -240,7 +255,8 @@ sub resolve_session {
 		return $ids->{$input};
 	}
 	else {
-		return $input;
+#		return $input;
+		return undef; # shouldn't this be more correct?
 	}
 }
 
@@ -304,22 +320,30 @@ sub select_write {
 	$self->_select_any( KR_FH_WRITES, @_ );
 }
 
+sub select_expedite {
+	my $self = shift;
+	DEBUG "[WATCH] Expedite @_\n" if DEBUGGING;
+	$self->_select_any( KR_FH_EXPEDITES, @_ );
+}
+
 sub select {
 	my $self = shift;
-	my ($fh, $read, $write, $expedite) = @_;
+	my $fh = shift;
 
-	die if $expedite;
+	if (@_ == 3) {
+		my ($read, $write, $expedite) = @_;
 
-	if ($read and $write) {
 		$self->select_read( $fh, $read );
 		$self->select_write( $fh, $write );
+		$self->select_expedite( $fh, $expedite );
 	}
-	elsif ($read or $write) {
-		die();
-	}
-	else {
+	elsif (@_ == 0) {
 		$self->select_read( $fh );
 		$self->select_write( $fh );
+		$self->select_expedite( $fh );
+	}
+	else {
+		die();
 	}
 }
 
@@ -424,8 +448,16 @@ sub run {
 	my $fh_preads = $self->[KR_FH_READS_PAUSED];
 	my $fh_writes = $self->[KR_FH_WRITES];
 	my $fh_pwrites = $self->[KR_FH_WRITES_PAUSED];
+	my $fh_expedites = $self->[KR_FH_EXPEDITES];
 
-	while (@$queue or keys %$fh_reads or keys %$fh_preads or keys %$fh_writes or keys %$fh_pwrites) {
+	while (
+			@$queue or
+			keys %$fh_reads or
+			keys %$fh_preads or
+			keys %$fh_writes or
+			keys %$fh_pwrites or
+			keys %$fh_expedites
+		) {
 		my $delay = undef;
 		while (@$queue) {
 			my $when = $queue->[0]->when();
@@ -544,6 +576,15 @@ sub alias_resolve {
 	my $alias = $_[0];
 
 	return $self->[KR_ALIASES]->{$alias};
+}
+
+sub alias_list {
+	my $self = shift;
+	my $session = shift or POE::Callstack->peek();
+
+	my $aliases = $self->[KR_ALIASES];
+	
+	return grep { $aliases->{$_} == $session } keys %{$self->[KR_ALIASES]};
 }
 
 sub refcount_increment {

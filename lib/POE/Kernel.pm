@@ -398,45 +398,68 @@ sub select_resume_write {
 }
 
 sub delay {
-	my $self = shift;
-	my $event = shift;
-	my $seconds = shift;
-	my $args = [@_];
+	die unless $_[1];
+	die unless $_[2];
+
+	$_[2] += time;
+
+	&_internal_alarm_destroy_all;
+	&_internal_alarm_add;
+}
+
+sub delay_add {
+	die unless $_[1];
+	die unless $_[2];
+
+	$_[2] += time;
+
+	&_internal_alarm_add;
+}
+
+sub alarm {
+	die unless $_[1];
+	die unless $_[2];
+
+	&_internal_alarm_destroy_all;
+	&_internal_alarm_add;
+}
+
+sub alarm_add {
+	die unless $_[1];
+	die unless $_[2];
+
+	&_internal_alarm_add;
+}
+
+sub _internal_alarm_add {
+	my ($self, $event, $seconds, @args) = @_;
 
 	my $queue = $self->[KR_QUEUE];
 
-	die unless $event;
+	my $current_session = POE::Callstack->peek();
+
+	@$queue = sort { $a <=> $b } (
+		@$queue,
+		POE::Event->new(
+			$self,
+			$seconds,
+			$current_session,
+			$current_session,
+			$event,
+			\@args,
+		),
+	);
+}
+
+sub _internal_alarm_destroy_all {
+	my ($self, $event) = @_;
+
+	my $queue = $self->[KR_QUEUE];
 
 	my $current_session = POE::Callstack->peek();
 
-	if (defined $seconds) {
-		$seconds += time;
-	
-		@$queue = sort { $a <=> $b } (
-			@$queue,
-			POE::Event->new(
-				$self,
-				$seconds,
-				$current_session,
-				$current_session,
-				$event,
-				$args,
-			),
-		);
-	}
-	else {
-		@$queue = grep { not ( $current_session == $_->from and $event eq $_->name() ) } @$queue;
-	}
+	@$queue = grep { not ( $current_session == $_->from and $event eq $_->name() ) } @$queue;
 }
-
-#sub delay_set {
-#	my $self = shift;
-#	my $event = shift;
-#	my $seconds = shift;
-#	my $args = [@_];
-#
-#
-#}
 
 sub run {
 	my $self = shift;
@@ -491,6 +514,7 @@ sub _select {
 	my $preads = $self->[KR_FH_READS_PAUSED];
 	my $writes = $self->[KR_FH_WRITES];
 	my $pwrites = $self->[KR_FH_WRITES_PAUSED];
+	my $expedites = $self->[KR_FH_EXPEDITES];
 	my $signals = $self->[KR_SIGNALS];
 
 	my $rin = my $win = my $ein = '';
@@ -517,6 +541,12 @@ sub _select {
 		$pwrite_count++;
 	}
 
+	my $expedite_count = 0;
+	foreach my $fd (keys %$expedites) {
+		$expedite_count++;
+		vec($ein, $fd, 1) = 1;
+	}
+
 	my $signal_count = 0;
 	foreach my $signal (keys %$signals) {
 		$signal_count++;
@@ -524,10 +554,10 @@ sub _select {
 
 	if (DEBUGGING) {
 		if (defined( $timeout )) {
-			DEBUG "[POLL] Waiting a maximum of $timeout for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, and $signal_count signals.\n" if DEBUGGING;
+			DEBUG "[POLL] Waiting a maximum of $timeout for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, $expedite_count expedite reads, and $signal_count signals.\n" if DEBUGGING;
 		}
 		else {
-			DEBUG "[POLL] Waiting for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, and $signal_count signals.\n" if DEBUGGING;
+			DEBUG "[POLL] Waiting for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, $expedite_count expedite reads, and $signal_count signals.\n" if DEBUGGING;
 		}
 #		use Data::Dumper;
 #		if ($read_count == 0 and $write_count == 0) {
@@ -548,6 +578,13 @@ sub _select {
 	while (my ($fd, $watchers) = each %$writes) {
 		if (vec( $wout, $fd, 1 )) {
 			foreach my $watcher (@$watchers) {
+				$self->post( $watcher->{session}, $watcher->{event}, $watcher->{fh} );
+			}
+		}
+	}
+	while (my ($fd, $watchers) = each %$expedites) {
+		if (vec( $eout, $fd, 1 )) {
+			foreach my $watcher( @$watchers) {
 				$self->post( $watcher->{session}, $watcher->{event}, $watcher->{fh} );
 			}
 		}
@@ -704,61 +741,6 @@ sub sig_handled {
 
 sub DESTROY {
   DEBUG "Kernel Destruction!\n" if DEBUGGING;
-}
-
-BEGIN {
-	my @management = qw(ID run run_one_timeslice stop); # Add the last two to POE docs synopsis.
-	my @FIFO = qw(post yield call);
-	my @original_alarms = qw(alarm alarm_add delay delay_add);
-	my @new_alarms = qw(alarm_set delay_set alarm_adjust delay_adjust alarm_remove alarm_remove_all);
-	my @aliases = qw(alias_set alias_remove alias_resolve ID_id_to_session ID_session_to_id alias_list);
-	my @filehandle = qw(select_read select_write select_pause_read select_resume_read select_pause_write select_resume_write select_expedite select); # select_pause_read missing in POE docs main body
-	my @sessions = qw(detach_child detach_myself); # Missing from POE synopsis
-	my @signals = qw(sig sig_handled signal signal_ui_destroy); # signal_ui_destory missing from synposis
-	my @state = qw(state);
-	my @refcount = qw(refcount_increment refcount_decrement);
-	my @data = qw(get_active_session get_active_event);
-
-	my @all = (@management, @FIFO, @original_alarms, @new_alarms, @aliases, @filehandle, @sessions, @signals, @state, @refcount, @data);
-
-	if ($ENV{HOE_TEST_COVERAGE}) {
-		my $good = 0;
-		my $bad = 0;
-		
-		foreach my $method (@all) {
-			if (__PACKAGE__->can($method)) {
-				$good++;
-				warn "$method\tYes\n";
-			}
-			else {
-				$bad++;
-				warn "$method\tNo\n";
-			}
-		}
-		my $percentage = sprintf( "%f", ($good/($good+$bad)))*100;
-		warn "\n$good Handled / $bad Not : $percentage%.\n";
-	}
-
-	if (my $failtype = $ENV{HOE_FAILURES}) {
-		foreach my $method (@all) {
-			next if(__PACKAGE__->can($method));
-			if ($failtype eq 'SILENT') {
-				eval qq(sub $method { });
-				die ($@) if $@;
-			}
-			elsif ($failtype eq 'WARN') {
-				eval qq(sub $method { shift; DEBUG "[BAD] $method: \@_\\n" });
-				die ("eval failed $@") if $@;
-			}
-			elsif ($failtype eq 'FATAL') {
-				eval qq(sub $method { shift; DEBUG "[BAD] $method: \@_\\n"; exit });
-				die ("eval failed: $@") if $@;
-			}
-			else {
-				die "HOE_FAILURES must be one of SILENT WARN or FATAL if supplied\n";
-			}
-		}
-	}
 }
 
 1;

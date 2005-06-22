@@ -14,4 +14,7 @@ diff-install:
 		diff -u $(SHARE)/Callstack.pm lib/POE/Callstack.pm || true
 
 test:
-		perl -Mlib=lib test.pl
+		perl -Mlib=mylib -Mlib=lib test.pl
+
+poetest:
+		perl -Mlib=mylib test.pl

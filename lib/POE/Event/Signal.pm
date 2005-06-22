@@ -18,6 +18,8 @@ sub dispatch {
 	my $args	= $self->[POE::Event::ARGS];
 
 	# Reset the sig_handled flag
+
+	# This algorithm is copied pretty much verbatim from POE's Kernel.pm, it's very elegant anyways.
 	
 	my @touched_sessions = ($session);
 	my $touched_index = 0;

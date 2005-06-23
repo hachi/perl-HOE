@@ -1,6 +1,6 @@
 package POE::Event;
 
-use POE::Callstack;
+use POE::Callstack qw(POP PUSH);
 
 sub KERNEL () { 0 }
 sub TIME   () { 1 }
@@ -53,7 +53,8 @@ sub dispatch {
 		DEBUG "[DISPATCH] Event dispatching From: $self->[FROM] To: $to Event: $self->[NAME]\n" if DEBUGGING;
 		
 		# push inside, so we know the $to
-		POE::Callstack->push( $to );
+
+		PUSH( $to, $self->[NAME] );
 	
 		my $return = $to->_invoke_state( $self->[FROM], $self->[NAME], $self->[ARGS] );
 		@$self = ();
@@ -61,7 +62,7 @@ sub dispatch {
 	}
 
 	# Pop outside, so we know that as much destruction as possible has happened
-	POE::Callstack->pop();
+	POP;
 
 	return $return;
 }

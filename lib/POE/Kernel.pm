@@ -7,7 +7,7 @@ use Time::HiRes;
 use WeakRef;
 use POE::Event;
 use POE::Event::Signal;
-use POE::Callstack;
+use POE::Callstack qw(PEEK CURRENT_SESSION CURRENT_EVENT);
 
 use Carp qw(cluck);
 
@@ -74,7 +74,7 @@ sub new {
     {}, # Child Sessions hashref "key"==value (weakened values), by parent session
   ], (ref $class || $class);
 
-  POE::Callstack->push($self);
+  POE::Callstack::PUSH($self);
 
   return $self;
 }
@@ -114,7 +114,7 @@ sub import {
 		weaken($self->[KR_IDS]->{$id} = $session);
 		$self->[KR_SESSIONS]->{$session} = $id;
 
-		my $parent = POE::Callstack->peek();
+		my $parent = CURRENT_SESSION;
 
 		$self->[KR_PARENTS]->{$session} = $parent;
 		weaken($self->[KR_CHILDREN]->{$parent}->{$session} = $session);
@@ -169,7 +169,11 @@ sub ID_id_to_session {
 }
 
 sub get_active_session {
-	return POE::Callstack->peek();
+	return CURRENT_SESSION;
+}
+
+sub get_active_event {
+	return CURRENT_EVENT;
 }
 
 sub get_children {
@@ -194,7 +198,7 @@ sub post {
 	die "event is undefined in post" unless(defined( $state ));
 
 	# Name resolution /could/ happen during dispatch instead, I think everything would stay alive just fine simply because kernel is embedded in the event, and the sessions are all held inside aliases within that.
-	my $from = POE::Callstack->peek();
+	my $from = CURRENT_SESSION;
 	my $queue = $self->[KR_QUEUE];
 	@$queue = sort { $a <=> $b } (@$queue, POE::Event->new( $self, time, $from, $to, $state, \@etc ));
 
@@ -207,7 +211,7 @@ sub yield {
 
 	die "event name is undefined in yield" unless(defined( $state )); 
 
-	my $from = POE::Callstack->peek();
+	my $from = CURRENT_SESSION;
 	my $queue = $self->[KR_QUEUE];
 	@$queue = sort { $a <=> $b } (@$queue, POE::Event->new( $self, time, $from, $from, $state, \@etc ));
 	
@@ -222,7 +226,7 @@ sub call {
 	die "event undefined in call" unless(defined( $to ));
 
 	DEBUG "[CALL] Kernel: $self To: $to State: $state\n" if DEBUGGING;
-	POE::Event->new( $self, undef, POE::Callstack->peek(), $to, $state, \@etc )->dispatch();
+	POE::Event->new( $self, undef, CURRENT_SESSION, $to, $state, \@etc )->dispatch();
 	DEBUG "[CALL] Completed\n" if DEBUGGING;
 }
 
@@ -260,7 +264,7 @@ sub _select_any {
 
 	my $fd = fileno($fh);
 
-	my $current_session = POE::Callstack->peek();
+	my $current_session = CURRENT_SESSION;
 
 	unless (defined( $current_session )) {
 		DEBUG "[[[BAD]]] Current session undefined, global destruction?\n";
@@ -428,7 +432,7 @@ sub _internal_alarm_add {
 
 	my $queue = $self->[KR_QUEUE];
 
-	my $current_session = POE::Callstack->peek();
+	my $current_session = CURRENT_SESSION;
 
 	@$queue = sort { $a <=> $b } (
 		@$queue,
@@ -448,7 +452,7 @@ sub _internal_alarm_destroy_all {
 
 	my $queue = $self->[KR_QUEUE];
 
-	my $current_session = POE::Callstack->peek();
+	my $current_session = CURRENT_SESSION;
 
 	@$queue = grep { not ( $current_session == $_->from and $event eq $_->name() ) } @$queue;
 }
@@ -586,7 +590,7 @@ sub _select {
 sub alias_set {
 	my $self = shift;
 	my $alias = $_[0];
-	my $session = POE::Callstack->peek();
+	my $session = CURRENT_SESSION;
   
 	$self->[KR_ALIASES]->{$alias} = $session;
 
@@ -609,7 +613,7 @@ sub alias_resolve {
 
 sub alias_list {
 	my $self = shift;
-	my $session = shift or POE::Callstack->peek();
+	my $session = shift or CURRENT_SESSION;
 
 	my $aliases = $self->[KR_ALIASES];
 	
@@ -618,7 +622,7 @@ sub alias_list {
 
 sub refcount_increment {
 	my $self = shift;
-	my $session = POE::Callstack->peek();
+	my $session = CURRENT_SESSION;
 	my $refs = $self->[KR_REFS];
 	unless (exists $refs->{$session} and ref $refs->{$session} eq 'ARRAY') {
 		$refs->{$session} = [];
@@ -629,7 +633,7 @@ sub refcount_increment {
 
 sub refcount_decrement {
 	my $self = shift;
-	my $session = POE::Callstack->peek();
+	my $session = CURRENT_SESSION;
 	my $refs = $self->[KR_REFS];
 
 	shift @{$refs->{$session}};
@@ -641,7 +645,7 @@ sub refcount_decrement {
 
 sub state {
 	my $self = shift;
-	my $session = POE::Callstack->peek();
+	my $session = CURRENT_SESSION;
 
 	return $session->register_state( @_ );
 }
@@ -662,7 +666,7 @@ sub sig {
 
 	my $signals = $self->[KR_SIGNALS];
 	
-	my $session = POE::Callstack->peek();
+	my $session = CURRENT_SESSION;
 
 	if ($event) {
 		DEBUG "[SIGNAL] Session: $session Signal: $signal_name Event: $event\n" if DEBUGGING;
@@ -698,7 +702,7 @@ sub signal {
 	POE::Event::Signal->new(
 		$self,
 		time(),
-		POE::Callstack->peek(),
+		CURRENT_SESSION,
 		$session,
 		$signal,
 		\@args,

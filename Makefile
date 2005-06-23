@@ -19,7 +19,7 @@ test:
 poetest:
 		perl -Mlib=mylib test.pl
 
-coverage:
+coverage:	lib/
 		perl -Mlib=mylib -Mlib=lib t/00_coverage.t > coverage || true
 
 coverageupload:	coverage

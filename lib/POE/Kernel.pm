@@ -669,7 +669,9 @@ sub sig {
 		unless (exists( $signals->{$signal_name} )) {
 			$signals->{$signal_name} = {};
 		}
-		$signals->{$signal_name}->{$session} = [ $session, $event ];
+		my $watcher = $signals->{$signal_name}->{$session} = [ $session, $event ];
+
+		weaken( $watcher->[0] );
 
 		if ($signal_name eq 'CHLD') {
 			$self->_install_chld_handler;

@@ -18,3 +18,9 @@ test:
 
 poetest:
 		perl -Mlib=mylib test.pl
+
+coverage:
+		perl -Mlib=mylib -Mlib=lib t/00_coverage.t > coverage || true
+
+coverageupload:	coverage
+		scp coverage hachi.kuiki.net:/www/hachi.kuiki.net/projects/hoe/coverage.txt

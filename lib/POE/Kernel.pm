@@ -21,14 +21,6 @@ sub POE::Kernel {
 	return $poe_kernel; 
 }
 
-#$SIG{ALRM} = sub {
-#	DEBUG( "BLOCKED!\n" );
-#	cluck( "BLOCKED!\n" );
-#	sleep 600;
-#};
-#
-#alarm 20;
-
 BEGIN {
 	if($ENV{'HOE_DEBUG'}) {
 		eval "sub DEBUGGING () { 1 }";

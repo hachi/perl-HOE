@@ -7,6 +7,8 @@ use base 'POE::Event';
 use strict;
 use warnings;
 
+my $flag;
+
 sub dispatch {
 	my $self = shift;
 
@@ -18,6 +20,7 @@ sub dispatch {
 	my $args	= $self->[POE::Event::ARGS];
 
 	# Reset the sig_handled flag
+	$flag = 0;
 
 	# This algorithm is copied pretty much verbatim from POE's Kernel.pm, it's very elegant anyways.
 	
@@ -44,6 +47,13 @@ sub dispatch {
 			}
 		}
 	}
+
+	# Flag not set? KILL ALL HUMANS.
+	# TODO
+}
+
+sub HANDLED {
+	$flag = 1;
 }
 
 1;

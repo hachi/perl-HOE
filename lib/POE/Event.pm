@@ -2,12 +2,19 @@ package POE::Event;
 
 use POE::Callstack qw(POP PUSH);
 
-sub KERNEL () { 0 }
-sub TIME   () { 1 }
-sub FROM   () { 2 }
-sub TO     () { 3 }
-sub NAME   () { 4 }
-sub ARGS   () { 5 }
+{
+	my $i = 0;
+
+	sub _ATTR_COUNTER {
+		return $i++;
+	}
+}
+	
+BEGIN {
+	foreach my $attr (qw(KERNEL TIME FROM TO NAME ARGS)) {
+		eval "sub $attr () { " . _ATTR_COUNTER . " }";
+	}
+}
 
 use overload (
 	"<=>"	=> sub {
@@ -31,6 +38,8 @@ sub new {
 	my $name = shift;
 	my $args = shift;
 
+	DEBUG( "New Class: $class Kernel: $kernel\n" );
+
 	my $self = bless [
 		$kernel,  # KERNEL
 		$when,    # TIME
@@ -45,6 +54,8 @@ sub new {
 
 sub dispatch {
 	my $self = shift;
+
+	DEBUG( "Event: @$self\n" );
 
 	{	# Wrap this baby in a magical scope so destruction happens in a timely manner... yes
 	
@@ -80,6 +91,11 @@ sub from {
 sub name {
 	my $self = shift;
 	return $self->[NAME];
+}
+
+sub args {
+	my $self = shift;
+	return $self->[ARGS];
 }
 
 1;

@@ -7,9 +7,12 @@ use Time::HiRes;
 use WeakRef;
 use POE::Event;
 use POE::Event::Signal;
+use POE::Event::Alarm;
 use POE::Callstack qw(PEEK CURRENT_SESSION CURRENT_EVENT);
 
 use Carp qw(cluck);
+
+use Errno qw(EPERM ESRCH);
 
 use vars qw($poe_kernel);
 
@@ -120,10 +123,10 @@ sub import {
 		weaken($self->[KR_CHILDREN]->{$parent}->{$session} = $session);
 		
 		# Who is SENDER in this case?
-		$self->call( $session, '_start', @args );
-		# TODO _parent and _child calls, as approrpriate
-		# TODO keep track of parent/children relationships
-		# parents cannot die until they have no children alive
+		my @result = $self->call( $session, '_start', @args );
+		
+		# $parent could be the Kernel, \@result may not be correct, see POE::Session docs which are vague.
+		$self->call( $parent, '_child', 'create', $session, \@result );
 
 		no strict 'refs';
 		no warnings 'redefine';
@@ -146,12 +149,26 @@ sub session_dealloc {
 	my $session = shift;
 	DEBUG "[SESSION] Deallocating $session\n" if DEBUGGING;
 
-	$self->call( $session, '_stop' );
+	if (exists $self->[KR_SESSIONS]->{$session}) {
+		my @result = $self->call( $session, '_stop' );
+		my $parent = $self->[KR_PARENTS]->{$session};
+
+		# $parent could be the Kernel, the args list is vaguely documented in POE::Session... not sure this is correct
+		$self->call( $parent, '_child', 'lose', $session, \@result );
+	}
+	$self->cleanup_session( $session );
+}
+
+sub cleanup_session {
+	my $self = shift;
+	my $session = shift;
+
 	my $id = $self->[KR_SESSIONS]->{$session};
 	delete $self->[KR_SESSIONS]->{$session};
 	delete $self->[KR_IDS]->{$id};
 	my $parent = delete $self->[KR_PARENTS]->{$session};
 	delete $self->[KR_CHILDREN]->{$parent}->{$session};
+	return;
 }
 
 sub ID_session_to_id {
@@ -188,6 +205,61 @@ sub get_children {
 		return values %{$self->[KR_CHILDREN]->{$parent}};
 	}
 	return (); # return empty list or undef... empty list prevents recursion problems... undef seems more correct
+}
+
+sub detach_child {
+	my $self = shift;
+	my $session = shift;
+
+	if (grep { $session == $_ } $self->get_children( CURRENT_SESSION )) {
+		return _internal_detach( $session );
+	}
+	else {
+		$! = EPERM;
+		return 0;
+	}
+}
+
+sub detach_myself {
+	my $self = shift;
+	return _internal_detach( CURRENT_SESSION );
+}
+
+sub _internal_detach {
+	my $self = shift;
+	my $session = shift;
+
+	my $parents = $self->[KR_PARENTS];
+	my $children = $self->[KR_CHILDREN];
+
+	if (exists( $parents->{$session} )) {
+		my $old_parent = $parents->{$session};
+		
+		if ($old_parent == $self) {
+			$! = EPERM;
+			return 0;
+		}
+		else {
+			$self->call( $old_parent, '_child', 'lose', $session );
+			delete( $children->{$old_parent}->{$session} );
+
+			# Prevent leaks
+			keys( %{$children->{$old_parent}} ) or delete $children->{$old_parent};
+
+			$self->[KR_PARENTS]->{$session} = $self;
+			weaken($self->[KR_CHILDREN]->{$self}->{$session} = $session);
+
+			$self->call( $session, '_parent', $old_parent, $self );
+			# This is always the kernel... what the heck is this event for?
+			#$self->call( $self, '_child', 'gain', $session );
+			
+			return 1;
+		}
+	}
+	else {
+		$! = ESRCH;
+		return 0;
+	}
 }
 
 sub post {
@@ -394,67 +466,186 @@ sub select_resume_write {
 }
 
 sub delay {
+	my @stuff = @_;
 	die unless $_[1];
-	die unless $_[2];
 
-	$_[2] += time;
+	_internal_alarm_destroy(@stuff);
 
-	&_internal_alarm_destroy_all;
-	&_internal_alarm_add;
+	my $result;
+
+	if (defined( $_[2] )) {
+		$stuff[2] += time;
+		$result = _internal_alarm_add(@stuff);
+	}
+
+	return 0 if (defined( $result ));
 }
 
 sub delay_add {
+	my @stuff = @_;
 	die unless $_[1];
 	die unless $_[2];
 
-	$_[2] += time;
+	$stuff[2] += time;
 
-	&_internal_alarm_add;
+	return 0 if (defined( _internal_alarm_add(@stuff) ));
 }
 
 sub alarm {
 	die unless $_[1];
-	die unless $_[2];
 
-	&_internal_alarm_destroy_all;
-	&_internal_alarm_add;
+	_internal_alarm_destroy(@_);
+
+	my $result;
+	
+	if (defined( $_[2] )) {
+		_internal_alarm_add(@_);
+	}
+
+	return 0 if (defined( $result ));
 }
 
 sub alarm_add {
 	die unless $_[1];
 	die unless $_[2];
 
-	&_internal_alarm_add;
+	return 0 if (defined( _internal_alarm_add(@_) ));
 }
 
 sub _internal_alarm_add {
-	my ($self, $event, $seconds, @args) = @_;
+	my ($self, $name, $seconds, @args) = @_;
 
 	my $queue = $self->[KR_QUEUE];
 
 	my $current_session = CURRENT_SESSION;
 
-	@$queue = sort { $a <=> $b } (
-		@$queue,
-		POE::Event->new(
+	my $event = POE::Event::Alarm->new(
 			$self,
 			$seconds,
 			$current_session,
 			$current_session,
-			$event,
+			$name,
 			\@args,
-		),
+			time,
+		);
+
+	@$queue = sort { $a <=> $b } (
+		@$queue,
+		$event
 	);
+
+	return $event->alarm_id;
 }
 
-sub _internal_alarm_destroy_all {
+sub _internal_alarm_destroy {
 	my ($self, $event) = @_;
 
 	my $queue = $self->[KR_QUEUE];
 
 	my $current_session = CURRENT_SESSION;
 
-	@$queue = grep { not ( $current_session == $_->from and $event eq $_->name() ) } @$queue;
+	# This algorithm is completely wrong, I don't know what I was thinking when I wrote it
+	
+	@$queue = grep { not ( $_->can('alarm_id') and $current_session == $_->from and $event eq $_->name() ) } @$queue;
+}
+
+sub alarm_adjust {
+	my ($self, $alarm_id, $delta) = @_;
+
+	my $queue = $self->[KR_QUEUE];
+
+	my @alarms = grep { $_->can('alarm_id') and $_->alarm_id == $alarm_id } @$queue;
+
+	if (@alarms == 1) {
+		return $alarms[0]->adjust_when( $delta );
+	}
+}
+
+sub alarm_set {
+	return _internal_alarm_add(@_);
+}
+
+sub alarm_remove {
+	my ($self, $alarm_id) = @_;
+
+	my $queue = $self->[KR_QUEUE];
+	my @events;
+
+	my $current_session = PEEK;
+
+	@$queue = map { 
+		if ($_->can('alarm_id') and $_->alarm_id == $alarm_id and $current_session == $_->from) {
+			push @events, $_;
+			return ();
+		}
+		else {
+			return $_;
+		}
+	} @$queue;
+
+	if (@events == 1) {
+		my $event = shift @events;
+		my $things = [ $event->name, $event->when, $event->args ];
+
+		if (wantarray) {
+			return @$things;
+		}
+		else {
+			return $things;
+		}
+	}
+
+	return;
+}
+
+sub alarm_remove_all {
+	my ($self) = @_;
+
+	my $queue = $self->[KR_QUEUE];
+	my @events;
+
+	my $current_session = PEEK;
+
+	@$queue = map { 
+		if ($_->can('alarm_id') and $current_session == $_->from) {
+			push @events, $_;
+			return ();
+		}
+		else {
+			return $_;
+		}
+	} @$queue;
+
+	my $things = [ map { [ $_->name, $_->when, $_->args ] } @events ];
+
+	if (wantarray) {
+		return @$things;
+	}
+	else {
+		return $things;
+	}
+}
+
+sub delay_set {
+	my @stuff = @_;
+	die unless $_[1];
+	die unless $_[2];
+	
+	$stuff[2] += time;
+
+	_internal_alarm_add(@stuff);
+}
+
+sub delay_adjust {
+	my ($self, $alarm_id, $when) = @_;
+
+	my $queue = $self->[KR_QUEUE];
+
+	my @alarms = grep { $_->can('alarm_id') and $_->alarm_id == $alarm_id } @$queue;
+
+	if (@alarms == 1) {
+		return $alarms[0]->set_when( $when );
+	}
 }
 
 sub run {
@@ -477,9 +668,9 @@ sub run {
 			keys %$fh_pwrites or
 			keys %$fh_expedites
 		) {
-		my $delay = undef;
+		my $when;
 		while (@$queue) {
-			my $when = $queue->[0]->when();
+			$when = $queue->[0]->when();
 			if ($when <= time) {
 				my $event = shift @$queue;
 				my $from = $event->from;
@@ -494,10 +685,16 @@ sub run {
 			else {
 				last;
 			}
-			$delay = $when - time;
-			$delay = 0 if $delay < 0;
 		}
-		$self->_select($delay);
+		
+		if (defined( $when )) {
+			$when -= time;
+			if ($when < 0) {
+				$when = 0;
+			}
+		}
+		
+		$self->_select($when);
 	}
 	DEBUG "[RUN] Kernel exited cleanly\n" if DEBUGGING;
 }
@@ -698,15 +895,23 @@ sub signal {
 	my $session = shift;
 	my $signal = shift;
 	my @args = @_;
+	
+	my $queue = $self->[KR_QUEUE];
+	@$queue = sort { $a <=> $b } (
+		@$queue,
+		POE::Event::Signal->new(
+			$self,
+			time(),
+			CURRENT_SESSION,
+			$session,
+			$signal,
+			\@args,
+		)
+	);
+}
 
-	POE::Event::Signal->new(
-		$self,
-		time(),
-		CURRENT_SESSION,
-		$session,
-		$signal,
-		\@args,
-	)->dispatch();
+sub signal_ui_destroy {
+	die( "Not implemented at this time\n" );
 }
 
 use POSIX ":sys_wait_h";
@@ -735,10 +940,15 @@ sub _data_sig_get_safe_signals {
 }
 
 sub sig_handled {
+	POE::Event::Signal::HANDLED(1);
 }
 
 sub DESTROY {
   DEBUG "Kernel Destruction!\n" if DEBUGGING;
+}
+
+sub _invoke_state {
+
 }
 
 1;

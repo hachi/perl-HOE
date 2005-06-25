@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-use Test::Simple tests => 7;
+use Test::Simple tests => 8;
 
 my $i = 0;
 
@@ -19,10 +19,10 @@ POE::Session::Hachi->create(
 			make_child();
 		},
 		_stop => sub {
-			ok( ++$i == 7, "Parent Destruction" );
+			ok( ++$i == 8, "Parent Destruction" );
 		},
 		signal => sub {
-			ok( ++$i == 5, "Parent signal" );
+			ok( ++$i == 6, "Parent signal" );
 			$POE::KERNEL->sig_handled()
 		},
 	}
@@ -34,14 +34,18 @@ sub make_child {
 			_start => sub {
 				ok( ++$i == 3, "Child startup" );
 				$POE::KERNEL->sig( 'foo', 'signal' );
+				$POE::KERNEL->yield( 'yielding' );
 				$POE::KERNEL->signal( $POE::KERNEL, 'foo' );
 			},
+			yielding => sub {
+				ok( ++$i == 4, "Yield before signals" );
+			},
 			signal => sub {
-				ok( ++$i == 4, "Child signal" );
+				ok( ++$i == 5, "Child signal" );
 				$POE::KERNEL->sig_handled();
 			},
 			_stop => sub {
-				ok( ++$i == 6, "Child Destruction" );
+				ok( ++$i == 7, "Child Destruction" );
 			},
 		}
 	);

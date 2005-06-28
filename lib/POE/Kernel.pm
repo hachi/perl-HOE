@@ -517,8 +517,6 @@ sub _internal_alarm_add {
 
 	my $current_session = CURRENT_SESSION;
 
-	DEBUG( "[ALARM] Adding event to be dispatched at $seconds, currently " . time . "\n" );
-
 	my $event = POE::Event::Alarm->new(
 			$self,
 			$seconds,
@@ -533,8 +531,6 @@ sub _internal_alarm_add {
 		@$queue,
 		$event
 	);
-
-	print "[ALARM] @$event\n";
 
 	return $event->alarm_id;
 }
@@ -674,7 +670,6 @@ sub run {
 		while (@$queue) {
 			$when = $queue->[0]->when();
 			my $now = time;
-			DEBUG "[DISPATCH] Now: $now When: $when\n";
 			if ($when <= $now) {
 				my $event = shift @$queue;
 				my $from = $event->from;
@@ -857,6 +852,23 @@ sub alias_list {
 	return grep { $aliases->{$_} == $session } keys %$aliases;
 }
 
+sub _data_alias_loggable {
+	my $self = shift;
+	my $session = shift;
+
+	my @aliases = $self->alias_list( $session );
+
+	"session " . $session->ID . " (" .
+		( @aliases
+		? join( ", ", @aliases )
+		: $session
+	) . ")"
+}
+
+sub _warn {
+#	DEBUG( @_ );
+}
+
 sub refcount_increment {
 	my $self = shift;
 	my $session = CURRENT_SESSION;
@@ -936,7 +948,7 @@ sub sig {
 sub signal {
 	my $self = shift;
 	my $session = shift;
-	my $signal = shift;
+	my $signal = $_[0];
 	my @args = @_;
 	
 	my $queue = $self->[KR_QUEUE];
@@ -971,8 +983,7 @@ sub _install_chld_handler {
 			my $status = $?;
 			my $watchers = $kernel->[KR_SIGNALS]->{CHLD};
 			while (my ($session, $watcher) = each %$watchers) {
-				# TODO SIGNAL DISPATCH HERE
-				$kernel->post( $watcher->[0], $watcher->[1], 'CHLD', $child, $status );
+				$kernel->signal( $watcher->[0], 'CHLD', $child, $status );
 			}
 		}
 		$kernel->_install_chld_handler; # This line could be keeping the kernel alive wrongly, not sure.
@@ -982,12 +993,12 @@ sub _install_chld_handler {
 sub _install_sig_handler {
 	my $kernel = shift;
 	my $signal_name = shift;
+	my @args = @_;
 
 	$SIG{$signal_name} = sub {
 		my $watchers = $kernel->[KR_SIGNALS]->{$signal_name};
 		while (my ($session, $watcher) = each %$watchers) {
-			# TODO SIGNAL DISPATCH HERE
-			$kernel->post( $watcher->[0], $watcher->[1], $signal_name );
+			$kernel->signal( $watcher->[0], $signal_name, @args );
 		}
 		$kernel->_install_sig_handler( $signal_name );
 	}

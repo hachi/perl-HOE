@@ -1,14 +1,15 @@
 package POE::Event::Alarm;
 
 use base 'POE::Event';
-use POE::Event;
 
 use strict;
 use warnings;
 
 BEGIN {
-	foreach my $attr (qw(CTIME ALARM_ID)) {
-		eval "sub $attr () { " . POE::Event::_ATTR_COUNTER . " }";
+	my $i = 0;
+	foreach my $attr (@POE::Event::_ELEMENTS, qw(CTIME ALARM_ID)) {
+		eval "sub $attr () { $i }";
+		$i++;
 	}
 }
 
@@ -40,20 +41,20 @@ sub adjust_when {
 	my $self = shift;
 
 	if (@_) {
-		$self->[POE::Event::TIME] += shift;
+		$self->[TIME] += shift;
 	}
 
-	return $self->[POE::Event::TIME];
+	return $self->[TIME];
 }
 
 sub set_when {
 	my $self = shift;
 
 	if (@_) {
-		$self->[POE::Event::TIME] = shift;
+		$self->[TIME] = shift;
 	}
 
-	return $self->[POE::Event::TIME];
+	return $self->[TIME];
 }
 
 1;

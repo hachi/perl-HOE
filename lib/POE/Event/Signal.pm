@@ -1,7 +1,7 @@
 package POE::Event::Signal;
 
 use POE::Kernel;
-#use POE::Event;
+use POE::Event;
 use base 'POE::Event';
 
 use strict;

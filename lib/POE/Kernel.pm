@@ -163,11 +163,13 @@ sub cleanup_session {
 
 	# We could destroy the innards of the session and that may help clean things up
 
-	my $id = $self->[KR_SESSIONS]->{$session};
-	delete $self->[KR_SESSIONS]->{$session};
-	delete $self->[KR_IDS]->{$id};
-	my $parent = delete $self->[KR_PARENTS]->{$session};
-	delete $self->[KR_CHILDREN]->{$parent}->{$session};
+	if (my $id = $self->[KR_SESSIONS]->{$session} ) {
+		delete $self->[KR_SESSIONS]->{$session};
+		delete $self->[KR_IDS]->{$id};
+	}
+	if (my $parent = delete $self->[KR_PARENTS]->{$session}) {
+		delete $self->[KR_CHILDREN]->{$parent}->{$session};
+	}
 	return;
 }
 
@@ -706,6 +708,41 @@ sub run {
 		$self->_select($when);
 	}
 	DEBUG "[RUN] Kernel exited cleanly\n" if DEBUGGING;
+}
+
+sub run_one_timeslice {
+	my $self = shift;
+
+	my $queue = $self->[KR_QUEUE];
+
+	$self->_select( 0 );
+
+	my $when;
+	
+	while (@$queue) {
+		$when = $queue->[0]->when();
+		if ($when <= time) {
+			my $event = shift @$queue;
+			my $from = $event->from;
+			my $name = $event->name;
+			$event->dispatch();
+			if (@$queue) {
+				$when = $queue->[0]->when();
+			}
+		}
+		else {
+			last;
+		}
+	}
+
+	if (defined( $when )) {
+		$when -= time;
+		if ($when < 0) {
+			$when = 0;
+		}
+	}
+
+	return $when;
 }
 
 sub _select {

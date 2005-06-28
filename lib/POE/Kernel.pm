@@ -161,6 +161,8 @@ sub cleanup_session {
 	my $self = shift;
 	my $session = shift;
 
+	# We could destroy the innards of the session and that may help clean things up
+
 	my $id = $self->[KR_SESSIONS]->{$session};
 	delete $self->[KR_SESSIONS]->{$session};
 	delete $self->[KR_IDS]->{$id};
@@ -203,6 +205,14 @@ sub get_children {
 		return values %{$self->[KR_CHILDREN]->{$parent}};
 	}
 	return (); # return empty list or undef... empty list prevents recursion problems... undef seems more correct
+}
+
+sub stop {
+	my $self = shift;
+	foreach my $child ($self->get_children($self)) {
+		$self->cleanup_session( $child );
+	}
+	initialize_kernel();
 }
 
 sub detach_child {
@@ -1020,8 +1030,12 @@ sub _invoke_state {
 
 }
 
-$poe_kernel = __PACKAGE__->new();
-weaken( $poe_kernel->[KR_IDS]->{$poe_kernel->ID} = $poe_kernel );
-$poe_kernel->[KR_SESSIONS]->{$poe_kernel} = $poe_kernel->ID;
+sub initialize_kernel {
+	$poe_kernel = __PACKAGE__->new();
+	weaken( $poe_kernel->[KR_IDS]->{$poe_kernel->ID} = $poe_kernel );
+	$poe_kernel->[KR_SESSIONS]->{$poe_kernel} = $poe_kernel->ID;
+}
+
+initialize_kernel();
 
 1;

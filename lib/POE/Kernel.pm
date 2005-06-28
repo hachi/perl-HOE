@@ -50,7 +50,6 @@ BEGIN {
 }
 
 sub ID {
-	my $self = shift;
 	return "THE KERNEL";
 }
 
@@ -319,11 +318,13 @@ sub resolve_session {
 	my $aliases = $self->[KR_ALIASES];
 	my $ids = $self->[KR_IDS];
 
+	DEBUG( "[RESOLVE] Input: $input\n" ) if DEBUGGING;
+
 	unless( $input ) {
 		cluck( "Undefined state resolution attempted\n" );
 	}
 
-	if ($input->can('_invoke_state')) {
+	if (ref( $input ) and $input->can('_invoke_state')) {
 		return $input;
 	}
 	elsif (exists( $aliases->{$input} )) {
@@ -640,7 +641,7 @@ sub delay_set {
 	my @stuff = @_;
 	die unless $_[1];
 	die unless $_[2];
-	
+
 	$stuff[2] += time;
 
 	_internal_alarm_add(@stuff);
@@ -654,7 +655,7 @@ sub delay_adjust {
 	my @alarms = grep { $_->can('alarm_id') and $_->alarm_id == $alarm_id } @$queue;
 
 	if (@alarms == 1) {
-		return $alarms[0]->set_when( $when );
+		return $alarms[0]->adjust_when( $when );
 	}
 }
 

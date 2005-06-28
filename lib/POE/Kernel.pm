@@ -12,11 +12,9 @@ use POE::Callstack qw(PEEK CURRENT_SESSION CURRENT_EVENT);
 
 use Carp qw(cluck);
 
-use Errno qw(EPERM ESRCH);
+use Errno qw(EPERM ESRCH EEXIST);
 
 use vars qw($poe_kernel);
-
-$poe_kernel = __PACKAGE__->new();
 
 # This is for silently making POE::Kernel->whatever from a package to an object call...
 # it may not even be necessary... heck, it may not even work... should test that.
@@ -519,6 +517,8 @@ sub _internal_alarm_add {
 
 	my $current_session = CURRENT_SESSION;
 
+	DEBUG( "[ALARM] Adding event to be dispatched at $seconds, currently " . time . "\n" );
+
 	my $event = POE::Event::Alarm->new(
 			$self,
 			$seconds,
@@ -533,6 +533,8 @@ sub _internal_alarm_add {
 		@$queue,
 		$event
 	);
+
+	print "[ALARM] @$event\n";
 
 	return $event->alarm_id;
 }
@@ -671,11 +673,13 @@ sub run {
 		my $when;
 		while (@$queue) {
 			$when = $queue->[0]->when();
-			if ($when <= time) {
+			my $now = time;
+			DEBUG "[DISPATCH] Now: $now When: $when\n";
+			if ($when <= $now) {
 				my $event = shift @$queue;
 				my $from = $event->from;
 				my $name = $event->name;
-				DEBUG "[DISPATCH] From: $from Event: $name\n" if DEBUGGING;
+				DEBUG "[DISPATCH] $event @$event From: $from Event: $name\n" if DEBUGGING;
 				$event->dispatch();
 				DEBUG "[DISPATCH] Completed\n" if DEBUGGING;
 				if (@$queue) {
@@ -752,11 +756,6 @@ sub _select {
 		else {
 			DEBUG "[POLL] Waiting for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, $expedite_count expedite reads, and $signal_count signals.\n" if DEBUGGING;
 		}
-#		use Data::Dumper;
-#		if ($read_count == 0 and $write_count == 0) {
-#			print Dumper( $preads );
-#			print Dumper( $pwrites );
-#		}
 	}
 
 	my $nfound = CORE::select( my $rout = $rin, my $wout = $win, my $eout = $ein, $timeout );
@@ -787,9 +786,22 @@ sub _select {
 sub alias_set {
 	my $self = shift;
 	my $alias = $_[0];
+	
 	my $session = CURRENT_SESSION;
-  
-	$self->[KR_ALIASES]->{$alias} = $session;
+	my $aliases = $self->[KR_ALIASES];
+
+	if (exists( $aliases->{$alias} )) {
+		if ($aliases->{$alias} == $session) {
+			return 0;
+		}
+		else {
+			return EEXIST;
+		}
+	}
+	else {
+		$self->[KR_ALIASES]->{$alias} = $session;
+		return 0;
+	}
 
 	# We can either hook into the session and wait for a DESTROY event to come back to us to clean up the alias, or we can stipulate that the session object must clean up all of it's own aliases. The latter may be better for speed and clean code.
 }
@@ -798,23 +810,51 @@ sub alias_remove {
 	my $self = shift;
 	my $alias = $_[0];
 
-	delete $self->[KR_ALIASES]->{$alias};
+	my $aliases = $self->[KR_ALIASES];
+
+	if (exists( $aliases->{$alias} )) {
+		if ($aliases->{$alias} == CURRENT_SESSION) {
+			delete $aliases->{$alias};
+			return 0
+		}
+		else {
+			return EPERM;
+		}
+	}
+	else {
+		return ESRCH;
+	}
 }
 
 sub alias_resolve {
 	my $self = shift;
 	my $alias = $_[0];
 
-	return $self->[KR_ALIASES]->{$alias};
+	my $aliases = $self->[KR_ALIASES];
+	my $ids = $self->[KR_IDS];
+	my $sessions = $self->[KR_SESSIONS];
+
+	if (exists( $aliases->{$alias} )) {
+		return $aliases->{$alias};
+	}
+	elsif (exists( $ids->{$alias} )) {
+		return $ids->{$alias};
+	}
+	elsif (exists( $sessions->{$alias} )) {
+		return $ids->{$sessions->{$alias}};
+	}
+
+	$! = ESRCH;
+	return undef;
 }
 
 sub alias_list {
 	my $self = shift;
-	my $session = shift or CURRENT_SESSION;
+	my $session = (@_ ? shift : CURRENT_SESSION);
 
 	my $aliases = $self->[KR_ALIASES];
 	
-	return grep { $aliases->{$_} == $session } keys %{$self->[KR_ALIASES]};
+	return grep { $aliases->{$_} == $session } keys %$aliases;
 }
 
 sub refcount_increment {
@@ -874,8 +914,11 @@ sub sig {
 
 		weaken( $watcher->[0] );
 
-		if ($signal_name eq 'CHLD') {
+		if ($signal_name eq 'CHLD' or $signal_name eq 'CLD') {
 			$self->_install_chld_handler;
+		}
+		elsif (exists( $SIG{$signal_name} )) {
+			$self->_install_sig_handler( $signal_name );
 		}
 	}
 	else {
@@ -928,11 +971,26 @@ sub _install_chld_handler {
 			my $status = $?;
 			my $watchers = $kernel->[KR_SIGNALS]->{CHLD};
 			while (my ($session, $watcher) = each %$watchers) {
+				# TODO SIGNAL DISPATCH HERE
 				$kernel->post( $watcher->[0], $watcher->[1], 'CHLD', $child, $status );
 			}
 		}
 		$kernel->_install_chld_handler; # This line could be keeping the kernel alive wrongly, not sure.
 	};
+}
+
+sub _install_sig_handler {
+	my $kernel = shift;
+	my $signal_name = shift;
+
+	$SIG{$signal_name} = sub {
+		my $watchers = $kernel->[KR_SIGNALS]->{$signal_name};
+		while (my ($session, $watcher) = each %$watchers) {
+			# TODO SIGNAL DISPATCH HERE
+			$kernel->post( $watcher->[0], $watcher->[1], $signal_name );
+		}
+		$kernel->_install_sig_handler( $signal_name );
+	}
 }
 
 sub _data_sig_get_safe_signals {
@@ -950,5 +1008,9 @@ sub DESTROY {
 sub _invoke_state {
 
 }
+
+$poe_kernel = __PACKAGE__->new();
+weaken( $poe_kernel->[KR_IDS]->{$poe_kernel->ID} = $poe_kernel );
+$poe_kernel->[KR_SESSIONS]->{$poe_kernel} = $poe_kernel->ID;
 
 1;

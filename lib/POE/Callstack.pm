@@ -29,4 +29,8 @@ sub CURRENT_EVENT {
 	return $stack[-1]->[1];
 }
 
+sub CLEAN {
+	die if @stack;
+}
+
 1;

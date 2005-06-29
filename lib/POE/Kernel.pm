@@ -49,34 +49,40 @@ BEGIN {
 	}
 }
 
-sub ID {
-	return "THE KERNEL";
-}
-
 sub RUNNING_IN_HELL () { 0 }
 
 sub new {
   my $class = shift;
-  my $self = bless [
-    {}, # Aliases
-    [], # Queue
-    {}, # FH Reads
-    {}, # FH Reads (Paused)
-    {}, # FH Writes
-    {}, # FH Writes (Paused)
-    {}, # FH Expedites
-    {}, # FH Expedites (Paused spot, DANGEROUS, necessary for now)
-    {}, # Refs
-    {}, # IDS
-    {}, # Sessions
-    {}, # Signals
-    {}, # Parent Session, by child session
-    {}, # Child Sessions hashref "key"==value (weakened values), by parent session
-  ], (ref $class || $class);
-
-  POE::Callstack::PUSH($self);
+  my $self = bless [], (ref $class || $class);
+  $self->_init();
 
   return $self;
+}
+
+my $counter = 0;
+
+sub _init {
+	my $self = shift;
+
+	++$counter;
+	
+	@$self = (
+		{}, # Aliases
+		[], # Queue
+		{}, # FH Reads
+		{}, # FH Reads (Paused)
+		{}, # FH Writes
+		{}, # FH Writes (Paused)
+		{}, # FH Expedites
+		{}, # FH Expedites (Paused spot, DANGEROUS, necessary for now)
+		{}, # Refs
+		{}, # IDS
+		{}, # Sessions
+		{}, # Signals
+		{}, # Parent Session, by child session
+		{}, # Child Sessions hashref "key"==value (weakened values), by parent session
+		"THE KERNEL $counter", # ID
+	);
 }
 
 sub KR_ALIASES	() { 0 }
@@ -93,6 +99,7 @@ sub KR_SESSIONS	() { 10 }
 sub KR_SIGNALS	() { 11 }
 sub KR_PARENTS	() { 12 }
 sub KR_CHILDREN	() { 13 }
+sub KR_ID	() { 14 }
 
 sub import {
   my $package = caller();
@@ -172,6 +179,11 @@ sub cleanup_session {
 	return;
 }
 
+sub ID {
+	my $self = shift;
+	return $self->[KR_ID];
+}
+
 sub ID_session_to_id {
 	my $self = shift;
 	my $session = shift;
@@ -209,10 +221,13 @@ sub get_children {
 }
 
 sub stop {
+	# If this gets called from within an event dispatched by a signal event, then it won't stop till the signal event is finished dispatching, dangerous
 	my $self = shift;
 	foreach my $child ($self->get_children($self)) {
 		$self->cleanup_session( $child );
 	}
+	@{$self->[KR_QUEUE]} = (); # all kernel structures need to be purged in the same way, yucky, but very necessary
+	$self->_init();
 	initialize_kernel();
 }
 
@@ -735,6 +750,11 @@ sub run {
 		
 		$self->_select($when);
 	}
+	
+	POE::Callstack::POP;
+	POE::Callstack::CLEAN;
+	POE::Callstack::PUSH( $poe_kernel );
+
 	DEBUG "[RUN] Kernel exited cleanly\n" if DEBUGGING;
 }
 
@@ -1102,5 +1122,6 @@ sub initialize_kernel {
 }
 
 initialize_kernel();
+POE::Callstack::PUSH( $poe_kernel );
 
 1;

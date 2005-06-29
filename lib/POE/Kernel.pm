@@ -478,6 +478,9 @@ sub select_resume_write {
 
 sub delay {
 	my @stuff = @_;
+
+	DEBUG( "[ALARM] delay\n" );
+	
 	die unless $_[1];
 
 	_internal_alarm_destroy(@stuff);
@@ -494,6 +497,9 @@ sub delay {
 
 sub delay_add {
 	my @stuff = @_;
+	
+	DEBUG( "[ALARM] delay_add\n" );
+	
 	die unless $_[1];
 	die unless $_[2];
 
@@ -503,6 +509,8 @@ sub delay_add {
 }
 
 sub alarm {
+	DEBUG( "[ALARM] alarm\n" );
+
 	die unless $_[1];
 
 	_internal_alarm_destroy(@_);
@@ -517,6 +525,8 @@ sub alarm {
 }
 
 sub alarm_add {
+	DEBUG( "[ALARM] alarm_add\n" );
+
 	die unless $_[1];
 	die unless $_[2];
 
@@ -525,6 +535,8 @@ sub alarm_add {
 
 sub _internal_alarm_add {
 	my ($self, $name, $seconds, @args) = @_;
+
+	DEBUG( "[ALARM] _internal_alarm_add\n" );
 
 	my $queue = $self->[KR_QUEUE];
 
@@ -563,6 +575,8 @@ sub _internal_alarm_destroy {
 sub alarm_adjust {
 	my ($self, $alarm_id, $delta) = @_;
 
+	DEBUG( "[ALARM] Adjusting $alarm_id by $delta\n" );
+	
 	my $queue = $self->[KR_QUEUE];
 
 	my @alarms = grep { $_->can('alarm_id') and $_->alarm_id == $alarm_id } @$queue;
@@ -573,6 +587,7 @@ sub alarm_adjust {
 }
 
 sub alarm_set {
+	DEBUG( "[ALARM] Setting Alarm @_\n" );
 	return _internal_alarm_add(@_);
 }
 
@@ -584,6 +599,8 @@ sub alarm_remove {
 
 	my $current_session = PEEK;
 
+	DEBUG( "[ALARM] Attempting removal of ID# $alarm_id from $current_session\n" );
+
 	@$queue = map { 
 		if ($_->can('alarm_id') and $_->alarm_id == $alarm_id and $current_session == $_->from) {
 			push @events, $_;
@@ -593,6 +610,8 @@ sub alarm_remove {
 			return $_;
 		}
 	} @$queue;
+
+	DEBUG( "[ALARM] " . @events . " matching events found, and removed\n" );
 
 	if (@events == 1) {
 		my $event = shift @events;
@@ -617,6 +636,8 @@ sub alarm_remove_all {
 
 	my $current_session = PEEK;
 
+	DEBUG( "[ALARM] alarm_remove_all\n" );
+
 	@$queue = map { 
 		if ($_->can('alarm_id') and $current_session == $_->from) {
 			push @events, $_;
@@ -639,6 +660,9 @@ sub alarm_remove_all {
 
 sub delay_set {
 	my @stuff = @_;
+
+	DEBUG( "[ALARM] delay_set\n" );
+	
 	die unless $_[1];
 	die unless $_[2];
 
@@ -649,6 +673,8 @@ sub delay_set {
 
 sub delay_adjust {
 	my ($self, $alarm_id, $when) = @_;
+
+	DEBUG( "[ALARM] delay_adjust\n" );
 
 	my $queue = $self->[KR_QUEUE];
 
@@ -794,10 +820,10 @@ sub _select {
 
 	if (DEBUGGING) {
 		if (defined( $timeout )) {
-			DEBUG "[POLL] Waiting a maximum of $timeout for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, $expedite_count expedite reads, and $signal_count signals.\n" if DEBUGGING;
+			DEBUG "[POLL] Waiting a maximum of $timeout for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, $expedite_count expedite reads, and $signal_count signals.\n";
 		}
 		else {
-			DEBUG "[POLL] Waiting for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, $expedite_count expedite reads, and $signal_count signals.\n" if DEBUGGING;
+			DEBUG "[POLL] Waiting for $read_count reads, $pread_count paused reads, $write_count writes, $pwrite_count paused writes, $expedite_count expedite reads, and $signal_count signals.\n";
 		}
 	}
 

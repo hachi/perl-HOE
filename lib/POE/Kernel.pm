@@ -8,7 +8,7 @@ use WeakRef;
 use POE::Event;
 use POE::Event::Signal;
 use POE::Event::Alarm;
-use POE::Callstack qw(PEEK CURRENT_SESSION CURRENT_EVENT);
+use POE::Callstack qw(CURRENT_SESSION CURRENT_EVENT);
 
 use Carp qw(cluck);
 
@@ -479,7 +479,7 @@ sub select_resume_write {
 sub delay {
 	my @stuff = @_;
 
-	DEBUG( "[ALARM] delay\n" );
+	DEBUG( "[ALARM] delay\n" ) if DEBUGGING;
 	
 	die unless $_[1];
 
@@ -498,7 +498,7 @@ sub delay {
 sub delay_add {
 	my @stuff = @_;
 	
-	DEBUG( "[ALARM] delay_add\n" );
+	DEBUG( "[ALARM] delay_add\n" ) if DEBUGGING;
 	
 	die unless $_[1];
 	die unless $_[2];
@@ -509,7 +509,7 @@ sub delay_add {
 }
 
 sub alarm {
-	DEBUG( "[ALARM] alarm\n" );
+	DEBUG( "[ALARM] alarm\n" ) if DEBUGGING;
 
 	die unless $_[1];
 
@@ -525,7 +525,7 @@ sub alarm {
 }
 
 sub alarm_add {
-	DEBUG( "[ALARM] alarm_add\n" );
+	DEBUG( "[ALARM] alarm_add\n" ) if DEBUGGING;
 
 	die unless $_[1];
 	die unless $_[2];
@@ -536,7 +536,7 @@ sub alarm_add {
 sub _internal_alarm_add {
 	my ($self, $name, $seconds, @args) = @_;
 
-	DEBUG( "[ALARM] _internal_alarm_add\n" );
+	DEBUG( "[ALARM] _internal_alarm_add\n" ) if DEBUGGING;
 
 	my $queue = $self->[KR_QUEUE];
 
@@ -575,7 +575,7 @@ sub _internal_alarm_destroy {
 sub alarm_adjust {
 	my ($self, $alarm_id, $delta) = @_;
 
-	DEBUG( "[ALARM] Adjusting $alarm_id by $delta\n" );
+	DEBUG( "[ALARM] Adjusting $alarm_id by $delta\n" ) if DEBUGGING;
 	
 	my $queue = $self->[KR_QUEUE];
 
@@ -587,7 +587,7 @@ sub alarm_adjust {
 }
 
 sub alarm_set {
-	DEBUG( "[ALARM] Setting Alarm @_\n" );
+	DEBUG( "[ALARM] Setting Alarm @_\n" ) if DEBUGGING;
 	return _internal_alarm_add(@_);
 }
 
@@ -597,21 +597,22 @@ sub alarm_remove {
 	my $queue = $self->[KR_QUEUE];
 	my @events;
 
-	my $current_session = PEEK;
+	my $current_session = CURRENT_SESSION;
 
-	DEBUG( "[ALARM] Attempting removal of ID# $alarm_id from $current_session\n" );
+	DEBUG( "[ALARM] Attempting removal of ID# $alarm_id from $current_session\n" ) if DEBUGGING;
 
 	@$queue = map { 
+		DEBUG( "[ALARM] Iterating: $_ from " . $_->from . "\n" ) if DEBUGGING; 
 		if ($_->can('alarm_id') and $_->alarm_id == $alarm_id and $current_session == $_->from) {
 			push @events, $_;
-			return ();
+			();
 		}
 		else {
-			return $_;
+			$_;
 		}
 	} @$queue;
 
-	DEBUG( "[ALARM] " . @events . " matching events found, and removed\n" );
+	DEBUG( "[ALARM] " . @events . " matching events found, and removed\n" ) if DEBUGGING;
 
 	if (@events == 1) {
 		my $event = shift @events;
@@ -634,9 +635,9 @@ sub alarm_remove_all {
 	my $queue = $self->[KR_QUEUE];
 	my @events;
 
-	my $current_session = PEEK;
+	my $current_session = CURRENT_SESSION;
 
-	DEBUG( "[ALARM] alarm_remove_all\n" );
+	DEBUG( "[ALARM] alarm_remove_all\n" ) if DEBUGGING;
 
 	@$queue = map { 
 		if ($_->can('alarm_id') and $current_session == $_->from) {
@@ -661,7 +662,7 @@ sub alarm_remove_all {
 sub delay_set {
 	my @stuff = @_;
 
-	DEBUG( "[ALARM] delay_set\n" );
+	DEBUG( "[ALARM] delay_set\n" ) if DEBUGGING;
 	
 	die unless $_[1];
 	die unless $_[2];
@@ -674,14 +675,14 @@ sub delay_set {
 sub delay_adjust {
 	my ($self, $alarm_id, $when) = @_;
 
-	DEBUG( "[ALARM] delay_adjust\n" );
+	DEBUG( "[ALARM] delay_adjust\n" ) if DEBUGGING;
 
 	my $queue = $self->[KR_QUEUE];
 
 	my @alarms = grep { $_->can('alarm_id') and $_->alarm_id == $alarm_id } @$queue;
 
 	if (@alarms == 1) {
-		return $alarms[0]->adjust_when( $when );
+		return $alarms[0]->set_when( $when + time );
 	}
 }
 

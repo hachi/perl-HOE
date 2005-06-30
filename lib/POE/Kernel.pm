@@ -10,7 +10,7 @@ use POE::Event::Signal;
 use POE::Event::Alarm;
 use POE::Callstack qw(CURRENT_SESSION CURRENT_EVENT);
 
-use Carp qw(cluck);
+use Carp qw(cluck croak);
 
 use Errno qw(EPERM ESRCH EEXIST);
 
@@ -139,6 +139,7 @@ sub import {
 			my $old_destroy = *{"${package}::DESTROY"}{CODE};
 			*{"${package}::DESTROY"} = sub {
 				my $inner_self = shift;
+				defined( $POE::Kernel::poe_kernel ) and
 				$POE::Kernel::poe_kernel->session_dealloc( $inner_self );
 				return unless $old_destroy;
 				$old_destroy->($inner_self);
@@ -657,12 +658,14 @@ sub alarm_remove_all {
 	@$queue = map { 
 		if ($_->can('alarm_id') and $current_session == $_->from) {
 			push @events, $_;
-			return ();
+			();
 		}
 		else {
-			return $_;
+			$_;
 		}
 	} @$queue;
+
+	DEBUG( "[ALARM] alarm_remove_all: removed " . @events . " alarm events for $current_session.\n" ) if DEBUGGING;
 
 	my $things = [ map { [ $_->name, $_->when, $_->args ] } @events ];
 
@@ -899,6 +902,8 @@ sub alias_set {
 sub alias_remove {
 	my $self = shift;
 	my $alias = $_[0];
+
+	croak( "Called alias_remove with no arguments\n" ) unless @_;
 
 	my $aliases = $self->[KR_ALIASES];
 

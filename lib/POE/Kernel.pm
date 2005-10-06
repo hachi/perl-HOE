@@ -18,6 +18,7 @@ use vars qw($poe_kernel);
 
 # This is for silently making POE::Kernel->whatever from a package to an object call...
 # it may not even be necessary... heck, it may not even work... should test that.
+# Followup: It is necessary.
 sub POE::Kernel {
 	return $poe_kernel; 
 }
@@ -50,6 +51,8 @@ BEGIN {
 }
 
 sub RUNNING_IN_HELL () { 0 }
+
+sub CHECKING_INTEGRITY () { 1 }
 
 sub new {
   my $class = shift;
@@ -127,10 +130,10 @@ sub import {
 		weaken($self->[KR_CHILDREN]->{$parent}->{$session} = $session);
 		
 		# Who is SENDER in this case?
-		my @result = $self->call( $session, '_start', @args );
+		my $result = $self->call( $session, '_start', @args );
 		
 		# $parent could be the Kernel, \@result may not be correct, see POE::Session docs which are vague.
-		$self->call( $parent, '_child', 'create', $session, \@result );
+		$self->call( $parent, '_child', 'create', $session, $result );
 
 		no strict 'refs';
 		no warnings 'redefine';
@@ -323,8 +326,9 @@ sub call {
 	die "event undefined in call" unless(defined( $to ));
 
 	DEBUG "[CALL] Kernel: $self To: $to State: $state\n" if DEBUGGING;
-	POE::Event->new( $self, undef, CURRENT_SESSION, $to, $state, \@etc )->dispatch();
+	my $result = POE::Event->new( $self, undef, CURRENT_SESSION, $to, $state, \@etc )->dispatch();
 	DEBUG "[CALL] Completed\n" if DEBUGGING;
+	return $result;
 }
 
 sub resolve_session {

@@ -1,5 +1,6 @@
 package POE::Event;
 
+use strict;
 use POE::Callstack qw(POP PUSH);
 
 BEGIN {
@@ -48,6 +49,8 @@ sub new {
 sub dispatch {
 	my $self = shift;
 
+	my $return;
+
 	{	# Wrap this baby in a magical scope so destruction happens in a timely manner... yes
 	
 		my $to = $self->[KERNEL]->resolve_session( $self->[TO] );
@@ -57,8 +60,10 @@ sub dispatch {
 		# push inside, so we know the $to
 
 		PUSH( $to, $self->[NAME] );
+
+		# TODO Propagate call context (void, scalar, list), this is gonna be slow unless I do it with an XSUB
 	
-		my $return = $to->_invoke_state( $self->[FROM], $self->[NAME], $self->[ARGS] );
+		$return = $to->_invoke_state( $self->[FROM], $self->[NAME], $self->[ARGS] );
 		@$self = ();
 
 	}

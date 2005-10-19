@@ -5,4 +5,6 @@ use Test::Harness;
 use strict;
 use warnings;
 
-runtests(<t/*.t>);
+use lib './mylib';
+
+runtests(<tests/*.t>);

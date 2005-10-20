@@ -12,6 +12,12 @@ BEGIN {
 	}
 }
 
+eval {
+	require XSLoader;
+	local $^W = 0;
+	XSLoader::load('HOE');
+} or warn( "XS Failed to load\n" );
+
 use overload (
 	"<=>"	=> sub {
 		return $_[0]->[TIME] <=> $_[1]->[TIME];

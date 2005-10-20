@@ -11,8 +11,6 @@ my $location = $INC{'HOE.pm'};
 
 $location =~ s{\.pm$}{/};
 
-warn "Location: $location";
-
 unshift @INC, $location;
 
 1;

@@ -7,4 +7,6 @@ use warnings;
 
 use lib './mylib';
 
+use HOE;
+
 runtests(<tests/*.t>);

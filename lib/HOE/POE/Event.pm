@@ -3,6 +3,8 @@ package POE::Event;
 use strict;
 use POE::Callstack qw(POP PUSH);
 
+use HOE;
+
 BEGIN {
 	our @_ELEMENTS = qw(KERNEL TIME FROM TO NAME ARGS);
 	my $i = 0;
@@ -12,11 +14,16 @@ BEGIN {
 	}
 }
 
-eval {
-	require XSLoader;
-	local $^W = 0;
-	XSLoader::load('HOE');
-} or warn( "XS Failed to load\n" );
+unless( exists( $ENV{HOE_NOXS} ) and $ENV{HOE_NOXS} ) {
+	eval {
+		require XSLoader;
+		local $^W = 0;
+		XSLoader::load('HOE', $HOE::XS_VERSION);
+	} or warn( "XS Failed to load: $@\n" );
+}
+else {
+	warn( "Skipping HOE XS load via environment HOE_NOXS=$ENV{HOE_NOXS}\n" );
+}
 
 use overload (
 	"<=>"	=> sub {
@@ -56,6 +63,9 @@ sub dispatch {
 	my $self = shift;
 
 	my $return;
+	my @return;
+
+	my $wantarray = wantarray;
 
 	{	# Wrap this baby in a magical scope so destruction happens in a timely manner... yes
 	
@@ -67,17 +77,37 @@ sub dispatch {
 
 		PUSH( $to, $self->[NAME] );
 
-		# TODO Propagate call context (void, scalar, list), this is gonna be slow unless I do it with an XSUB
-	
-		$return = $to->_invoke_state( $self->[FROM], $self->[NAME], $self->[ARGS] );
-		@$self = ();
+		if (defined( $wantarray )) {
+			if ($wantarray) {
+				@return = $to->_invoke_state( $self->[FROM], $self->[NAME], $self->[ARGS] );
+			}
+			else {
+				$return = $to->_invoke_state( $self->[FROM], $self->[NAME], $self->[ARGS] );
+			}
+		}
+		else {
+			$to->_invoke_state( $self->[FROM], $self->[NAME], $self->[ARGS] );
+		}
 
+		# Magic scope manipulation, destruct all the related things while we are still
+		# in teh context of a session (before POP)
+		@$self = ();
 	}
 
 	# Pop outside, so we know that as much destruction as possible has happened
 	POP;
 
-	return $return;
+	if (defined( $wantarray )) {
+		if ($wantarray) {
+			return @return;
+		}
+		else {
+			return $return;
+		}
+	}
+	else {
+		return;
+	}
 }
 
 sub when {

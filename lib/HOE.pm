@@ -5,12 +5,17 @@ use strict;
 use warnings;
 
 our $VERSION = '0.00_01';
+our $XS_VERSION = $VERSION;
 $VERSION = eval $VERSION;
 
-my $location = $INC{'HOE.pm'};
+unless (exists( $ENV{HOE_DISABLE} ) and $ENV{HOE_DISABLE}) {
+	my $location = $INC{'HOE.pm'};
+	$location =~ s{\.pm$}{/};
+	unshift @INC, $location;
 
-$location =~ s{\.pm$}{/};
-
-unshift @INC, $location;
+}
+else {
+	warn( "Disabling HOE via environment HOE_DISABLE=$ENV{HOE_DISABLE}\n" );
+}
 
 1;

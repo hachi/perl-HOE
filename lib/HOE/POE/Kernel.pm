@@ -5,6 +5,7 @@ use warnings;
 
 use Time::HiRes;
 use WeakRef;
+
 use POE::Event;
 use POE::Event::Signal;
 use POE::Event::Alarm;
@@ -225,12 +226,15 @@ sub get_children {
 }
 
 sub stop {
-	# If this gets called from within an event dispatched by a signal event, then it won't stop till the signal event is finished dispatching, dangerous
+	# If this gets called from within an event dispatched by a signal event,
+	# then it won't stop till the signal event is finished dispatching, dangerous
 	my $self = shift;
 	foreach my $child ($self->get_children($self)) {
 		$self->cleanup_session( $child );
 	}
-	@{$self->[KR_QUEUE]} = (); # all kernel structures need to be purged in the same way, yucky, but very necessary
+	
+	# all kernel structures need to be purged in the same way, yucky, but very necessary
+	@{$self->[KR_QUEUE]} = ();
 	$self->_init();
 	initialize_kernel();
 }
@@ -326,9 +330,37 @@ sub call {
 	die "event undefined in call" unless(defined( $to ));
 
 	DEBUG "[CALL] Kernel: $self To: $to State: $state\n" if DEBUGGING;
-	my $result = POE::Event->new( $self, undef, CURRENT_SESSION, $to, $state, \@etc )->dispatch();
+	my $return;
+	my @return;
+	my $wantarray = wantarray;
+
+	my $event = POE::Event->new( $self, undef, CURRENT_SESSION, $to, $state, \@etc );
+
+	if (defined( $wantarray )) {
+		if ($wantarray) {
+			@return = $event->dispatch();
+		}
+		else {
+			$return = $event->dispatch();
+		}
+	}
+	else {
+		$event->dispatch();
+	}
+	
 	DEBUG "[CALL] Completed\n" if DEBUGGING;
-	return $result;
+
+	if (defined( $wantarray )) {
+		if ($wantarray) {
+			return @return;
+		}
+		else {
+			return $return;
+		}
+	}
+	else {
+		return;
+	}
 }
 
 sub resolve_session {

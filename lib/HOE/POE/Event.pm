@@ -39,24 +39,22 @@ sub DEBUG {
 sub DEBUGGING () { 0 }
 
 sub new {
-	my $class = shift;
-	my $kernel = shift;
-	my $when = shift;
-	my $from = shift;
-	my $to = shift; # Resolution does nasty things, figure out where it belongs later (used to be here)
-	my $name = shift;
-	my $args = shift;
+#	my $class = shift;
+#	my $kernel = shift;
+#	my $when = shift;
+#	my $from = shift;
+#	my $to = shift; # Resolution does nasty things, figure out where it belongs later (used to be here)
+#	my $name = shift;
+#	my $args = shift;
 
-	my $self = bless [
-		$kernel,  # KERNEL
-		$when,    # TIME
-		$from,    # FROM
-		$to,      # TO
-		$name,    # NAME
-		$args,    # ARGS
-	], (ref $class || $class);
-
-	return $self;
+	return bless [
+		$_[1],  # KERNEL
+		$_[2],    # TIME
+		$_[3],    # FROM
+		$_[1]->resolve_session( $_[4] ),      # TO
+		$_[5],    # NAME
+		$_[6],    # ARGS
+	], (ref $_[0] || $_[0]);
 }
 
 sub dispatch {
@@ -69,7 +67,8 @@ sub dispatch {
 
 	{	# Wrap this baby in a magical scope so destruction happens in a timely manner... yes
 	
-		my $to = $self->[KERNEL]->resolve_session( $self->[TO] );
+		#my $to = $self->[KERNEL]->resolve_session( $self->[TO] );
+		my $to = $self->[TO];
 
 		DEBUG "[DISPATCH] Event dispatching From: $self->[FROM] To: $to Event: $self->[NAME]\n" if DEBUGGING;
 		
@@ -127,7 +126,12 @@ sub name {
 
 sub args {
 	my $self = shift;
-	return $self->[ARGS];
+	if (wantarray) {
+		return @{$self->[ARGS]};
+	}
+	else {
+		return $self->[ARGS];
+	}
 }
 
 1;

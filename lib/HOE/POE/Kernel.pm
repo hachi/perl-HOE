@@ -10,6 +10,7 @@ use POE::Event;
 use POE::Event::Signal;
 use POE::Event::Alarm;
 use POE::Callstack qw(CURRENT_SESSION CURRENT_EVENT);
+use POE::Session::Dead;
 
 use Carp qw(cluck croak);
 
@@ -39,7 +40,10 @@ BEGIN {
 	my $debug_file;
 	
 	if(my $debug_filename = $ENV{'HOE_DEBUG_FILE'}) {
-		open $debug_file, '>', $debug_filename or die "can't open debug file '$debug_filename': $!";
+		unless (open $debug_file, '>', $debug_filename) {
+			warn "can't open debug file '$debug_filename': $!";
+			$debug_file = \*STDERR;
+		}
 		CORE::select((CORE::select($debug_file), $| = 1)[0]);
 	}
 	else {
@@ -147,6 +151,7 @@ sub import {
 				$POE::Kernel::poe_kernel->session_dealloc( $inner_self );
 				return unless $old_destroy;
 				$old_destroy->($inner_self);
+				bless $inner_self, 'POE::Session::Dead';
 			};
 			$hijacked_namespaces{$package} = undef;
 		}
@@ -768,7 +773,7 @@ sub run {
 				my $event = shift @$queue;
 				my $from = $event->from;
 				my $name = $event->name;
-				DEBUG "[DISPATCH] $event @$event From: $from Event: $name\n" if DEBUGGING;
+				DEBUG "[DISPATCH] $event @$event From: $from Event: $name Args: " . join(',', $event->args) . "\n" if DEBUGGING;
 				$event->dispatch();
 				DEBUG "[DISPATCH] Completed\n" if DEBUGGING;
 				if (@$queue) {
@@ -1118,7 +1123,9 @@ sub _install_chld_handler {
 		while ((my $child = waitpid( -1, WNOHANG)) > 0) {
 			my $status = $?;
 			my $watchers = $kernel->[KR_SIGNALS]->{CHLD};
+			DEBUG( "Reaped pid $child with result $status\n" ) if DEBUGGING;
 			while (my ($session, $watcher) = each %$watchers) {
+				DEBUG( "  Dispatching 'CHLD' to $watcher->[0]\n" ) if DEBUGGING;
 				$kernel->signal( $watcher->[0], 'CHLD', $child, $status );
 			}
 		}

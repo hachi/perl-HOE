@@ -6,10 +6,10 @@ use warnings;
 use Time::HiRes;
 use WeakRef;
 
+use POE::Callstack qw(CURRENT_SESSION CURRENT_EVENT);
 use POE::Event;
 use POE::Event::Signal;
 use POE::Event::Alarm;
-use POE::Callstack qw(CURRENT_SESSION CURRENT_EVENT);
 use POE::Session::Dead;
 
 use Carp qw(cluck croak);

@@ -45,9 +45,17 @@ dispatch( self )
 		XPUSHs( args );
 		PUTBACK;
 		/* call _invoke_state with the original call context, return will fall through */
-		call_method("_invoke_state", GIMME_V);
+		call_method("_invoke_state", GIMME_V | G_EVAL);
 
 		SPAGAIN;
+
+		if (SvTRUE(ERRSV))
+		{
+			if (GIMME_V & G_SCALAR)
+				POPs;
+			
+
+		}
 		
 		/* magical scope trick, clear the event so everything destructs when we LEAVE
 		 * but before we POE::Callstack::POP */

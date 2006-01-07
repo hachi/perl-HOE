@@ -148,7 +148,7 @@ sub import {
 			*{"${package}::DESTROY"} = sub {
 				my $inner_self = shift;
 				defined( $POE::Kernel::poe_kernel ) and
-				$POE::Kernel::poe_kernel->session_dealloc( $inner_self );
+					$POE::Kernel::poe_kernel->session_dealloc( $inner_self );
 				return unless $old_destroy;
 				$old_destroy->($inner_self);
 				bless $inner_self, 'POE::Session::Dead';
@@ -331,8 +331,8 @@ sub call {
 	my $self = shift;
 	my ($to, $state, @etc) = @_;
 
-	die "destination undefined in call" unless(defined( $to ));
-	die "event undefined in call" unless(defined( $to ));
+	croak( "destination undefined in call" ) unless(defined( $to ));
+	croak( "event undefined in call" ) unless(defined( $to ));
 
 	DEBUG "[CALL] Kernel: $self To: $to State: $state\n" if DEBUGGING;
 	my $return;
@@ -432,8 +432,13 @@ sub _select_any {
 	}
 	else { # Clear watcher
 		DEBUG "[WATCH] Stop Fd: $fd Fh: $fh Class: $class\n" if DEBUGGING;
-		@{$main_class->{$fd}} = grep { not $_->{session} == $current_session } (@{$main_class->{$fd}});
-		@{$paused_class->{$fd}} = grep { not $_->{session} == $current_session } (@{$paused_class->{$fd}});
+		@{$main_class->{$fd}} = grep {
+			defined( $_->{session} ) and $_->{session} != $current_session
+		} (@{$main_class->{$fd}});
+		
+		@{$paused_class->{$fd}} = grep {
+			defined( $_->{session} ) and $_->{session} != $current_session
+		} (@{$paused_class->{$fd}});
 
 		unless (@{$main_class->{$fd}}) {
 			delete $main_class->{$fd};
@@ -466,21 +471,22 @@ sub select {
 	my $self = shift;
 	my $fh = shift;
 
-	if (@_ == 3) {
+#	$self->
+#	if (@_ == 3) {
 		my ($read, $write, $expedite) = @_;
 
 		$self->select_read( $fh, $read );
 		$self->select_write( $fh, $write );
 		$self->select_expedite( $fh, $expedite );
-	}
-	elsif (@_ == 0) {
-		$self->select_read( $fh );
-		$self->select_write( $fh );
-		$self->select_expedite( $fh );
-	}
-	else {
-		die();
-	}
+#	}
+#	elsif (@_ == 0) {
+#		$self->select_read( $fh );
+#		$self->select_write( $fh );
+#		$self->select_expedite( $fh );
+#	}
+#	else {
+#		die();
+#	}
 }
 
 sub _select_pause_any {
@@ -756,6 +762,7 @@ sub run {
 	my $fh_writes = $self->[KR_FH_WRITES];
 	my $fh_pwrites = $self->[KR_FH_WRITES_PAUSED];
 	my $fh_expedites = $self->[KR_FH_EXPEDITES];
+	my $signals = $self->[KR_SIGNALS];
 
 	while (
 			@$queue or
@@ -763,7 +770,8 @@ sub run {
 			keys %$fh_preads or
 			keys %$fh_writes or
 			keys %$fh_pwrites or
-			keys %$fh_expedites
+			keys %$fh_expedites or
+			keys %$signals
 		) {
 		my $when;
 		while (@$queue) {
@@ -1065,7 +1073,7 @@ sub sig {
 		}
 		my $watcher = $signals->{$signal_name}->{$session} = [ $session, $event ];
 
-		weaken( $watcher->[0] );
+		# weaken( $watcher->[0] );
 
 		if ($signal_name eq 'CHLD' or $signal_name eq 'CLD') {
 			$self->_install_chld_handler;
@@ -1120,7 +1128,8 @@ sub _install_chld_handler {
 		# Since this could happen between any two perl opcodes we should localize the error variable... waitpid plays with it.
 		local $!;
 		DEBUG( "Got CHLD SIGNAL\n" ) if DEBUGGING;
-		while ((my $child = waitpid( -1, WNOHANG)) > 0) {
+		my $child;
+		while (($child = waitpid( -1, WNOHANG)) > 0) {
 			my $status = $?;
 			my $watchers = $kernel->[KR_SIGNALS]->{CHLD};
 			DEBUG( "Reaped pid $child with result $status\n" ) if DEBUGGING;
@@ -1129,6 +1138,7 @@ sub _install_chld_handler {
 				$kernel->signal( $watcher->[0], 'CHLD', $child, $status );
 			}
 		}
+		DEBUG( "waitpid( -1, WNOHANG ) ended with status $child ($!)\n" ) if DEBUGGING;
 		$kernel->_install_chld_handler; # This line could be keeping the kernel alive wrongly, not sure.
 	};
 }

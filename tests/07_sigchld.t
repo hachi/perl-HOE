@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-use Test::More tests => 204;
+use Test::More tests => 205;
 
 use POE;
 use POE::Session::Hachi;
@@ -16,6 +16,7 @@ POE::Session::Hachi->create(
 	],
 	heap => {
 		pids => {},
+		child => 0,
 	},
 );
 
@@ -42,6 +43,7 @@ sub go {
 			}
 		}
 		elsif (defined( $fork )) {
+			$POE::HEAP->{child} = 1;
 			sleep( 2 );
 			exit( $return );
 		}
@@ -80,7 +82,12 @@ sub chld {
 }
 
 sub _stop {
-	die( "This should never get called" );
+	if ($POE::HEAP->{child}) {
+		fail( "This should not get called by a child." );
+	}
+	else {
+		pass( "This should be called in the parent." );
+	}
 }
 
 pass( "Before Run" );

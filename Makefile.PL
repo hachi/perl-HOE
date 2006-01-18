@@ -1,5 +1,4 @@
-use 5.008007;
-use ExtUtils::MakeMaker;
+use inc::Module::Install;
 
 WriteMakefile(
 	NAME		=> 'HOE',
@@ -10,7 +9,7 @@ WriteMakefile(
 				Carp		=> 0,
 				Errno		=> 0,
 				POSIX		=> 0,
+				POE		=> 0,
 	},
 	AUTHOR		=> 'Jonathan Steinert <hachi@cpan.org>',
-	INC		=> '-I. -I./mylib',
 );
